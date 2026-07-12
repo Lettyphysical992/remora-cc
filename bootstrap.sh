@@ -64,12 +64,12 @@ fi
 [ "$EXPECTED" = "$ACTUAL" ] || fail "SHA-256 verification failed"
 log "Verified SHA-256: $ACTUAL"
 
-if command -v gh >/dev/null 2>&1; then
+if [ "$ALLOW_CHECKSUM_ONLY" = "1" ]; then
+  log "WARNING: proceeding with checksum verification only by explicit override"
+elif command -v gh >/dev/null 2>&1; then
   gh attestation verify "$TMP/$ARCHIVE" --repo "$REPO" >/dev/null || \
     fail "GitHub artifact attestation verification failed"
   log "Verified GitHub artifact attestation for $REPO"
-elif [ "$ALLOW_CHECKSUM_ONLY" = "1" ]; then
-  log "WARNING: gh is unavailable; proceeding with checksum verification only by explicit override"
 else
   fail "GitHub CLI is required for provenance verification; install gh or explicitly set REMORA_ALLOW_CHECKSUM_ONLY=1"
 fi
