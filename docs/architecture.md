@@ -1,8 +1,8 @@
-# Remora Architecture
+# remora Architecture
 
 ## Design goal
 
-Remora provides a second launch surface for Claude Code. It changes routing for one process tree while preserving native Claude as a fully independent control path.
+remora provides a second launch surface for Claude Code. It changes routing for one process tree while preserving native Claude as a fully independent control path.
 
 ```mermaid
 flowchart TD
@@ -17,27 +17,27 @@ flowchart TD
 
 ## Isolation contract
 
-| Boundary | Remora behavior | Why it matters |
+| Boundary | remora behavior | Why it matters |
 |---|---|---|
 | Process | Uses `execvpe` with a copied environment | Overrides disappear with the child |
-| Integration marker | Sets `REMORA_ACTIVE=1` in the copied environment | Status lines and hooks can identify Remora without inspecting credentials or gateway URLs |
-| Settings | Writes no Claude settings; passes configured model ids through child-only `--settings` | Native configuration remains authoritative outside Remora while subagent validation can see gateway ids |
+| Integration marker | Sets `REMORA_ACTIVE=1` in the copied environment | Status lines and hooks can identify remora without inspecting credentials or gateway URLs |
+| Settings | Writes no Claude settings; passes configured model ids through child-only `--settings` | Native configuration remains authoritative outside remora while subagent validation can see gateway ids |
 | Agents | Sends one JSON object through `--agents` | Claude Code scopes it to the current session |
-| Authentication | Resolves a Remora-specific token, then sets `ANTHROPIC_AUTH_TOKEN` only in the child | The user's Anthropic login is neither read nor replaced on disk |
+| Authentication | Resolves a remora-specific token, then sets `ANTHROPIC_AUTH_TOKEN` only in the child | The user's Anthropic login is neither read nor replaced on disk |
 | Model defaults | Sets the three documented `ANTHROPIC_DEFAULT_*_MODEL` variables in the child | Internal Claude tiers resolve to gateway model names |
 | Routing allowlist | Adds every configured gateway id to the session's `availableModels` | Claude does not silently inherit the main model for an excluded subagent id |
 | Global override | Removes `CLAUDE_CODE_SUBAGENT_MODEL` from the copied child environment by default | One global variable cannot collapse every role back to one model |
 
-Claude Code's precedence places dynamic `--agents` below managed agents but above project, user, and plugin agents. A managed organization policy can therefore still prevent or replace a Remora role; Remora deliberately does not bypass managed policy.
+Claude Code's precedence places dynamic `--agents` below managed agents but above project, user, and plugin agents. A managed organization policy can therefore still prevent or replace a remora role; remora deliberately does not bypass managed policy.
 
-Claude Code also applies `availableModels` to subagent definitions. In 2.1.207, an excluded custom gateway id silently falls back to the parent model. Remora supplies its configured ids as an additional session-only allowlist and rejects a competing explicit `--settings` argument rather than risk losing that routing control. This is a compatibility allowance, not a bypass of higher-precedence managed policy.
+Claude Code also applies `availableModels` to subagent definitions. In 2.1.207, an excluded custom gateway id silently falls back to the parent model. remora supplies its configured ids as an additional session-only allowlist and rejects a competing explicit `--settings` argument rather than risk losing that routing control. This is a compatibility allowance, not a bypass of higher-precedence managed policy.
 
 ## Launch sequence
 
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant R as Remora
+    participant R as remora
     participant S as Secret store
     participant C as Claude Code
     participant G as Gateway
@@ -68,23 +68,25 @@ The split follows capability and token volume rather than file ownership. Read-o
 
 ## Gateway semantics
 
-Claude Code speaks the Anthropic Messages protocol, while the selected models may be OpenAI models. The gateway owns protocol translation, OAuth, model aliases, cooldown, retries, and account selection. Remora owns none of those concerns; it only chooses the gateway-visible model string for each role.
+Claude Code speaks the Anthropic Messages protocol, while the selected models may be OpenAI models. The gateway owns protocol translation, OAuth, model aliases, cooldown, retries, and account selection. remora owns none of those concerns; it only chooses the gateway-visible model string for each role.
 
-Context capacity crosses that boundary: the gateway catalog is authoritative for the provider route, but stock Claude Code assigns unknown custom model ids a 200K client window. Remora's default `stock` policy therefore reports the truthful 200K window and leaves Claude's native compact pipeline untouched. The optional `calico` policy queries `/v1/models?client_version=remora`, takes the minimum across configured models, supplies an exact child-only model/window map to a separately verified Calico binary, reports 95% usable context, and applies the 90% compact ratio exactly once to the raw mapped window. Discovery is read-only and falls back to TOML; it never rewrites gateway metadata.
+Codex active-turn continuity also crosses this boundary. Native Codex preserves server-issued turn state across tool continuations, but the stock CLIProxyAPI Claude bridge does not currently retain that state. This can make a remora turn stop at a subscription allowance boundary before native Codex would stop under backend fair-use rules. The confirmed source evidence, responsibility split, non-solutions, and acceptance test are documented in [Preserving Codex Active-Turn Fair Use Through the Claude Bridge](./codex-active-turn-fair-use.md).
+
+Context capacity crosses that boundary: the gateway catalog is authoritative for the provider route, but stock Claude Code assigns unknown custom model ids a 200K client window. remora's default `stock` policy therefore reports the truthful 200K window and leaves Claude's native compact pipeline untouched. The optional `calico` policy queries `/v1/models?client_version=remora`, takes the minimum across configured models, supplies an exact child-only model/window map to a separately verified Calico binary, reports 95% usable context, and applies the 90% compact ratio exactly once to the raw mapped window. Discovery is read-only and falls back to TOML; it never rewrites gateway metadata.
 
 This separation makes failures diagnosable:
 
 | Error location | Typical evidence | Owner |
 |---|---|---|
-| Launcher | Invalid TOML, missing token, missing `claude` binary | Remora |
+| Launcher | Invalid TOML, missing token, missing `claude` binary | remora |
 | Claude runtime | Invalid `--agents` field or unavailable tool | Claude Code version/configuration |
 | Gateway selector | Millisecond 429 with `model_cooldown` | Gateway state |
 | Upstream | Slower 429/5xx after a real network request | Provider/model/account |
 
 ## Native-Claude proof
 
-The launcher contains no code path that opens `~/.claude` for writing. Installation targets only XDG-style Remora paths. Tests also assert that clearing a global subagent override mutates only the environment copy passed to the child, not the parent process.
+The launcher contains no code path that opens `~/.claude` for writing. Installation targets only XDG-style remora paths. Tests also assert that clearing a global subagent override mutates only the environment copy passed to the child, not the parent process.
 
 ## Compatibility boundary
 
-The design depends on current Claude Code support for `--agents`, agent fields such as `model` and `effort`, and custom gateway environment variables. Remora validates its own shape but cannot guarantee that an arbitrary OpenAI model fully reproduces Claude-specific tool-use, caching, extended-thinking, or context-window behavior. Treat each gateway/model combination as an integration that needs an end-to-end smoke test.
+The design depends on current Claude Code support for `--agents`, agent fields such as `model` and `effort`, and custom gateway environment variables. remora validates its own shape but cannot guarantee that an arbitrary OpenAI model fully reproduces Claude-specific tool-use, caching, extended-thinking, or context-window behavior. Treat each gateway/model combination as an integration that needs an end-to-end smoke test.
