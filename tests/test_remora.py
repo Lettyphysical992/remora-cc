@@ -55,6 +55,13 @@ class RemoraTests(unittest.TestCase):
         self.assertIn("custom-main", command)
         self.assertIn(custom, command)
 
+    @mock.patch.dict(os.environ, {"REMORA_AUTH_TOKEN": "test-secret"}, clear=True)
+    def test_launch_marks_only_the_child_as_remora(self) -> None:
+        self.assertNotIn("REMORA_ACTIVE", os.environ)
+        _, env = remora.build_launch(self.config, [])
+        self.assertEqual(env["REMORA_ACTIVE"], "1")
+        self.assertNotIn("REMORA_ACTIVE", os.environ)
+
     def test_token_command_is_executed_without_a_shell(self) -> None:
         config = json.loads(json.dumps(self.config))
         config["proxy"]["auth_token_env"] = "REMORA_TEST_MISSING"

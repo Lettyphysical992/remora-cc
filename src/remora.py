@@ -149,6 +149,7 @@ def build_launch(
         prefix.extend(["--agents", compact])
 
     env = os.environ.copy()
+    env["REMORA_ACTIVE"] = "1"
     env["ANTHROPIC_BASE_URL"] = str(proxy["base_url"]).rstrip("/")
     if require_token:
         env["ANTHROPIC_AUTH_TOKEN"] = resolve_auth_token(config)
@@ -225,6 +226,7 @@ def dry_run(config: dict[str, Any], args: list[str]) -> None:
     shown_env = {
         key: env[key]
         for key in [
+            "REMORA_ACTIVE",
             "ANTHROPIC_BASE_URL",
             "ANTHROPIC_DEFAULT_OPUS_MODEL",
             "ANTHROPIC_DEFAULT_SONNET_MODEL",

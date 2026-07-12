@@ -35,6 +35,7 @@ Remora launches a child `claude` process with a session-only `--agents` JSON doc
 | `~/.claude/agents/` | Never written | Session agents take precedence by name |
 | Project `.claude/` | Never written | Continues to load normally |
 | Shell aliases/functions | Never written | None required |
+| Runtime marker | Absent | `REMORA_ACTIVE=1` in the child only |
 
 > **Core guarantee:** quitting Remora ends every override. Running `claude` afterward uses the same command, credentials, settings, and agents it used before installation.
 

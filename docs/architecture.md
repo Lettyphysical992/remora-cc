@@ -20,6 +20,7 @@ flowchart TD
 | Boundary | Remora behavior | Why it matters |
 |---|---|---|
 | Process | Uses `execvpe` with a copied environment | Overrides disappear with the child |
+| Integration marker | Sets `REMORA_ACTIVE=1` in the copied environment | Status lines and hooks can identify Remora without inspecting credentials or gateway URLs |
 | Settings | Reads no Claude settings and writes none | Native configuration remains authoritative outside Remora |
 | Agents | Sends one JSON object through `--agents` | Claude Code scopes it to the current session |
 | Authentication | Resolves a Remora-specific token, then sets `ANTHROPIC_AUTH_TOKEN` only in the child | The user's Anthropic login is neither read nor replaced on disk |
