@@ -76,6 +76,8 @@ remora doctor
 remora doctor --online
 ```
 
+Confirm that `remora doctor` prints every configured GPT model under `PASS routing allowlist`. Remora owns the child-only `--settings` argument used for this allowlist; do not add another `--settings` flag to the launch command.
+
 Compare the post-install `~/.claude` path manifest with the preflight manifest. A difference is a failed isolation check: stop, show the changed paths, and do not claim success. Finish with the installed version, verification method, created and preserved paths, gateway reachability, and uninstall command.
 
 ## Update and uninstall

@@ -46,7 +46,12 @@ class RemoraTests(unittest.TestCase):
         ):
             command, env = remora.build_launch(self.config, ["--continue"])
         self.assertEqual(command[0], "claude")
-        self.assertEqual(command[1:3], ["--model", "gpt-5.6-sol"])
+        self.assertEqual(command[command.index("--model") + 1], "gpt-5.6-sol")
+        settings = json.loads(command[command.index("--settings") + 1])
+        self.assertEqual(
+            settings["availableModels"],
+            ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"],
+        )
         self.assertEqual(env["ANTHROPIC_DEFAULT_SONNET_MODEL"], "gpt-5.6-terra")
         self.assertIn("--agents", command)
         payload = json.loads(command[command.index("--agents") + 1])
@@ -68,6 +73,23 @@ class RemoraTests(unittest.TestCase):
         self.assertEqual(command.count("--agents"), 1)
         self.assertIn("custom-main", command)
         self.assertIn(custom, command)
+
+    @mock.patch.dict(os.environ, {"REMORA_AUTH_TOKEN": "test-secret"}, clear=True)
+    def test_explicit_settings_fail_closed_instead_of_disabling_routing(self) -> None:
+        with self.assertRaisesRegex(remora.RemoraError, "cannot be combined"):
+            remora.build_launch(self.config, ["--settings", "custom.json"])
+
+    def test_routing_settings_allow_every_configured_model(self) -> None:
+        self.assertEqual(
+            remora.routing_settings(self.config),
+            {
+                "availableModels": [
+                    "gpt-5.6-luna",
+                    "gpt-5.6-sol",
+                    "gpt-5.6-terra",
+                ]
+            },
+        )
 
     @mock.patch.dict(os.environ, {"REMORA_AUTH_TOKEN": "test-secret"}, clear=True)
     def test_launch_marks_only_the_child_as_remora(self) -> None:

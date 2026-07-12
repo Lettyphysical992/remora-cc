@@ -21,13 +21,16 @@ flowchart TD
 |---|---|---|
 | Process | Uses `execvpe` with a copied environment | Overrides disappear with the child |
 | Integration marker | Sets `REMORA_ACTIVE=1` in the copied environment | Status lines and hooks can identify Remora without inspecting credentials or gateway URLs |
-| Settings | Reads no Claude settings and writes none | Native configuration remains authoritative outside Remora |
+| Settings | Writes no Claude settings; passes configured model ids through child-only `--settings` | Native configuration remains authoritative outside Remora while subagent validation can see gateway ids |
 | Agents | Sends one JSON object through `--agents` | Claude Code scopes it to the current session |
 | Authentication | Resolves a Remora-specific token, then sets `ANTHROPIC_AUTH_TOKEN` only in the child | The user's Anthropic login is neither read nor replaced on disk |
 | Model defaults | Sets the three documented `ANTHROPIC_DEFAULT_*_MODEL` variables in the child | Internal Claude tiers resolve to gateway model names |
+| Routing allowlist | Adds every configured gateway id to the session's `availableModels` | Claude does not silently inherit the main model for an excluded subagent id |
 | Global override | Removes `CLAUDE_CODE_SUBAGENT_MODEL` from the copied child environment by default | One global variable cannot collapse every role back to one model |
 
 Claude Code's precedence places dynamic `--agents` below managed agents but above project, user, and plugin agents. A managed organization policy can therefore still prevent or replace a Remora role; Remora deliberately does not bypass managed policy.
+
+Claude Code also applies `availableModels` to subagent definitions. In 2.1.207, an excluded custom gateway id silently falls back to the parent model. Remora supplies its configured ids as an additional session-only allowlist and rejects a competing explicit `--settings` argument rather than risk losing that routing control. This is a compatibility allowance, not a bypass of higher-precedence managed policy.
 
 ## Launch sequence
 
@@ -44,7 +47,7 @@ sequenceDiagram
     R->>R: Combine role prompts with model map
     R->>S: Read gateway token
     S-->>R: Token on stdout or environment
-    R->>C: exec claude --model ... --agents ...
+    R->>C: exec claude --settings ... --model ... --agents ...
     C->>G: POST /v1/messages
     G-->>C: Anthropic-compatible stream translated from OpenAI
 ```

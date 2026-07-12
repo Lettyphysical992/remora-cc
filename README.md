@@ -32,6 +32,7 @@ Remora launches a child `claude` process with a session-only `--agents` JSON doc
 | Command | Unchanged | Separate executable |
 | Anthropic login | Unchanged | Replaced only in the child environment |
 | `~/.claude/settings.json` | Never written | Still readable by Claude Code |
+| Additional settings | None | Child-only model allowlist passed with `--settings` |
 | `~/.claude/agents/` | Never written | Session agents take precedence by name |
 | Project `.claude/` | Never written | Continues to load normally |
 | Shell aliases/functions | Never written | None required |
@@ -61,6 +62,8 @@ The launcher is intentionally not a proxy and stores no OAuth credentials. Bring
 The defaults mirror the working GPT-5.6 split that motivated this repository. Every name is configurable because gateways expose different model catalogs.
 
 Claude Code's built-in aliases remain useful escape hatches: Opus defaults to Sol, Sonnet to Terra, and Haiku to Luna.
+
+Claude Code validates subagent models against `availableModels`. If a user's normal settings list only Claude aliases, a raw gateway id such as `gpt-5.6-luna` is otherwise rejected and silently inherits the Sol main model. Remora prevents that fallback by passing a child-only additional settings document that allowlists every configured gateway model. It does not write or replace the user's settings file, and managed organization policy still retains its normal higher precedence.
 
 | Role | Default model | Effort | Responsibility |
 |---|---|---:|---|
@@ -146,7 +149,7 @@ Give Claude Code this prompt. The immutable tag is intentional:
 
 ```text
 Read and follow this installation runbook:
-https://raw.githubusercontent.com/Nanako0129/remora-cc/v0.1.3/install/AGENT-INSTALL.md
+https://raw.githubusercontent.com/Nanako0129/remora-cc/v0.1.4/install/AGENT-INSTALL.md
 
 Perform only the read-only preflight first. Show every proposed filesystem
 change, trust boundary, download source, and verification step. Do not write
@@ -158,7 +161,7 @@ The runbook will not ask for a bearer token or OAuth file. It stops at an approv
 ### Manual source install
 
 ```bash
-git clone --branch v0.1.3 --depth 1 https://github.com/Nanako0129/remora-cc.git
+git clone --branch v0.1.4 --depth 1 https://github.com/Nanako0129/remora-cc.git
 cd remora-cc
 ./install.sh
 ```
@@ -248,12 +251,14 @@ The strongest behavioral check is simply to run both commands. `remora agents` s
 | Symptom | Meaning | Action |
 |---|---|---|
 | Agent inherits the main model | A global `CLAUDE_CODE_SUBAGENT_MODEL` overrode the agent map | Remora clears it in the child by default; confirm with `remora doctor` |
+| Every role resolves to the main model | Gateway ids were excluded by Claude Code's `availableModels` | Upgrade to Remora 0.1.4; `doctor` must print all configured ids in the routing allowlist |
 | Resumed agents still use an old model map | `/resume` restored session-scoped agent definitions from the old transcript | Start a fresh Remora session or hand off into a new session after changing routing |
 | `All credentials ... are cooling down` | The gateway locally suspended the only credential/model after an upstream 429 | Wait for reset, add failover credentials, lower concurrency, or restart only as a last-resort state reset |
 | Models work but names differ | The gateway exposes aliases different from this example | Update `[models]` and `[agent_models]` |
 | `Your input exceeds the context window` | The selected client mode and provider ceiling disagree | Run `remora doctor --online`; use the 200K `stock` default or install Calico before selecting `calico` |
 | Native Claude also uses the gateway | Gateway variables were exported globally in the shell | Remove global `ANTHROPIC_*` exports; let Remora set them for its child |
 | A role is missing | An explicit `--agents` flag replaced Remora's dynamic map | Remove that flag or merge the role into your supplied JSON |
+| `--settings cannot be combined` | A second additional-settings source would replace Remora's routing allowlist | Put persistent settings in the normal Claude settings files and let Remora own the session-only `--settings` argument |
 | `claude.ai connectors are disabled` warning | Claude Code detected Remora's child-only gateway auth instead of the native Claude login | Expected inside Remora; run plain `claude` when claude.ai connectors are required |
 
 > ⚠️ **Do not disable gateway cooldown globally as the first fix.** A real upstream rate limit can become a retry storm. The safer order is lower concurrency, bounded retry, multiple credentials, and correct classification of transient versus quota 429 responses.

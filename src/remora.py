@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-VERSION = "0.1.3"
+VERSION = "0.1.4"
 ROOT = Path(__file__).resolve().parent.parent
 AGENTS_FILE = ROOT / "agents" / "agents.json"
 DEFAULT_CONFIG = Path.home() / ".config" / "remora-cc" / "config.toml"
@@ -182,6 +182,10 @@ def configured_model_names(config: dict[str, Any]) -> set[str]:
             if name:
                 names.add(name)
     return names
+
+
+def routing_settings(config: dict[str, Any]) -> dict[str, Any]:
+    return {"availableModels": sorted(configured_model_names(config))}
 
 
 def fetch_gateway_context_windows(config: dict[str, Any], token: str) -> dict[str, int]:
@@ -362,7 +366,17 @@ def build_launch(
     claude_bin = str(runtime.get("claude_binary", "claude")).strip() or "claude"
     args = list(claude_args)
 
-    prefix: list[str] = []
+    if has_option(args, "--settings"):
+        raise RemoraError(
+            "--settings cannot be combined with Remora routing because Claude Code "
+            "accepts a single additional-settings source; put persistent settings in "
+            "Claude's normal settings files instead"
+        )
+
+    prefix: list[str] = [
+        "--settings",
+        json.dumps(routing_settings(config), ensure_ascii=True, separators=(",", ":")),
+    ]
     if not has_option(args, "--model", "-m"):
         prefix.extend(["--model", str(models["main"])])
     if not has_option(args, "--agents"):
@@ -436,6 +450,10 @@ def doctor(config: dict[str, Any], online: bool) -> int:
 
     print(f"PASS configuration: {config_path()}")
     print(f"PASS agents: {len(render_agents(config))} definitions render correctly")
+    print(
+        "PASS routing allowlist: "
+        + ", ".join(routing_settings(config)["availableModels"])
+    )
     try:
         token = resolve_auth_token(config)
         print("PASS proxy token: available (value hidden)")

@@ -2,6 +2,12 @@
 
 All notable changes to Remora are documented here.
 
+## 0.1.4 — 2026-07-12
+
+Fix per-agent GPT-5.6 routing when the user's Claude Code `availableModels` setting excludes gateway model ids. Claude Code 2.1.207 silently inherited the main Sol model in that case even though the `--agents` definitions loaded correctly. Remora now supplies a child-only additional settings document containing the configured Sol, Terra, and Luna ids, so subagent validation succeeds without modifying user settings, CLIProxyAPI, or Calico.
+
+The launcher fails closed when callers also pass `--settings`, because Claude Code accepts only one additional-settings source and silently losing Remora's routing allowlist would recreate the bug. `doctor` now reports the effective routing allowlist. Fresh-session end-to-end verification confirms a Sol main session delegated to a Luna subagent and reported both models in `modelUsage`.
+
 ## 0.1.3 — 2026-07-12
 
 Correct the context policy introduced in 0.1.2. Stock Claude Code treats unknown custom model ids as 200K and caps a larger auto-compact setting, so Remora now defaults to a truthful 200K client window and leaves Claude's native output-reserve and precompute behavior untouched.

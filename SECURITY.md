@@ -27,6 +27,7 @@ Remora is a launcher, not a sandbox. Claude Code keeps its normal filesystem and
 | Gateway bearer token | Read from a dedicated environment variable or direct credential command; never printed |
 | Agent prompts | Stored as auditable JSON in this repository |
 | Child environment | Exists only for the launched Claude process tree |
+| Child routing settings | Contains model ids only, is passed as a process argument, and is never persisted |
 | Gateway OAuth files | Outside Remora's scope; protect at the gateway host |
 
 ## Runtime boundaries
