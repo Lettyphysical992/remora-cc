@@ -10,6 +10,7 @@
 - [OAuth enrollment in the GUI](#oauth-enrollment-in-the-gui)
 - [remora connection](#remora-connection)
 - [Model aliases](#model-aliases)
+- [Experimental active-turn bridge](#experimental-active-turn-bridge)
 - [429 diagnosis](#429-diagnosis)
 - [Data and backup policy](#data-and-backup-policy)
 
@@ -230,6 +231,35 @@ The optional `calico` mode requires a verified Calico Claude binary. It passes a
 | `[context].effective_window_percent` | Diagnostic effective-input ratio; Codex defaults to 95% |
 | `[context].auto_compact_percent` | Child auto-compaction ratio; Codex defaults to 90% |
 | Existing Claude auto-compact environment variables | Explicit user overrides; take precedence |
+
+## Experimental active-turn bridge
+
+The stock `eceasy/cli-proxy-api:latest` image does not currently preserve Codex `x-codex-turn-state` across separate Claude tool-result requests. A compatible build must contain the v1 bridge and must opt in explicitly:
+
+```yaml
+codex:
+  active-turn-bridge: true
+```
+
+Version 1 fails closed unless the runtime topology is safe:
+
+| Requirement | Why it is mandatory |
+|---|---|
+| Exactly one enabled Codex credential | A server-issued turn token belongs to the credential that received it |
+| Credential-level `disable_cooling: true` or global cooling disabled | The selector must not hide that credential before a recognized continuation reaches the executor |
+| One local CLIProxyAPI process | Turn state is intentionally memory-only and is not shared through Home KV |
+| Calico binary with `calico-active-turn-adapter:v1` | Stock Claude does not send a stable user-prompt boundary |
+| `remora doctor --online` reports protocol v1 ready | The binary and gateway capability must agree before parity is assumed |
+
+The gateway advertises readiness only as:
+
+```text
+X-CLIProxyAPI-Codex-Active-Turn: 1
+```
+
+when every runtime requirement above is satisfied. Multiple credentials or Home mode remove the header rather than silently using unsafe failover. The raw backend turn-state value is retained only in bounded process memory, masked from request logs, and represented in debug diagnostics only by a truncated SHA-256 fingerprint.
+
+> **Availability:** this bridge is not part of upstream CLIProxyAPI `v7.2.71`. Until a remora-maintained build or upstream release is published, the normal deployment instructions above intentionally install the stock gateway and `doctor --online` will report active-turn mode as degraded.
 
 ## 429 diagnosis
 

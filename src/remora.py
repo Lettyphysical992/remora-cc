@@ -34,6 +34,12 @@ AUTO_COMPACT_ENV = "CLAUDE_CODE_AUTO_COMPACT_WINDOW"
 AUTO_COMPACT_PERCENT_ENV = "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"
 CALICO_CONTEXT_MAP_ENV = "CALICO_MODEL_CONTEXT_WINDOWS"
 CALICO_DISPLAY_PERCENT_ENV = "CALICO_CONTEXT_DISPLAY_PERCENT"
+CALICO_ACTIVE_TURN_MARKERS = (
+    b"calico-active-turn-adapter:v1",
+    b"x-calico-prompt-id",
+    b"x-calico-active-turn-version",
+)
+GATEWAY_ACTIVE_TURN_HEADER = "X-CLIProxyAPI-Codex-Active-Turn"
 
 
 class RemoraError(RuntimeError):
@@ -339,11 +345,10 @@ def has_option(args: list[str], long_name: str, short_name: str | None = None) -
     return False
 
 
-def calico_context_supported(claude_binary: str) -> bool:
+def binary_contains_marker(claude_binary: str, marker: bytes) -> bool:
     resolved = shutil.which(claude_binary)
     if not resolved:
         return False
-    marker = CALICO_CONTEXT_MAP_ENV.encode("ascii")
     overlap = b""
     try:
         with Path(resolved).open("rb") as handle:
@@ -355,6 +360,28 @@ def calico_context_supported(claude_binary: str) -> bool:
     except OSError:
         return False
     return False
+
+
+def calico_context_supported(claude_binary: str) -> bool:
+    return binary_contains_marker(claude_binary, CALICO_CONTEXT_MAP_ENV.encode("ascii"))
+
+
+def calico_active_turn_supported(claude_binary: str) -> bool:
+    return all(
+        binary_contains_marker(claude_binary, marker)
+        for marker in CALICO_ACTIVE_TURN_MARKERS
+    )
+
+
+def gateway_active_turn_supported(config: dict[str, Any], token: str) -> bool:
+    base_url = str(config["proxy"]["base_url"]).rstrip("/")
+    query = urllib.parse.urlencode({"client_version": f"remora-{VERSION}"})
+    request = urllib.request.Request(
+        f"{base_url}/v1/models?{query}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    with urllib.request.urlopen(request, timeout=8) as response:
+        return response.headers.get(GATEWAY_ACTIVE_TURN_HEADER, "").strip() == "1"
 
 
 def build_launch(
@@ -474,6 +501,31 @@ def doctor(config: dict[str, Any], online: bool) -> int:
         else:
             failures += 1
             print("FAIL Calico context adapter: custom-context-window marker not found")
+    calico_active_turn = bool(
+        claude_path and calico_active_turn_supported(claude_bin)
+    )
+    if calico_active_turn:
+        print("PASS Calico active-turn identity: versioned prompt marker present")
+    else:
+        print("WARN Calico active-turn identity: unavailable; quota-boundary parity is not guaranteed")
+    gateway_active_turn = False
+    if online and token:
+        try:
+            gateway_active_turn = gateway_active_turn_supported(config, token)
+            if gateway_active_turn:
+                print("PASS gateway active-turn bridge: capability v1 present")
+            else:
+                print("WARN gateway active-turn bridge: capability v1 not advertised")
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f"WARN gateway active-turn bridge: capability check failed ({exc})")
+    elif online:
+        print("INFO gateway active-turn bridge: skipped because proxy token is unavailable")
+    else:
+        print("INFO gateway active-turn bridge: run doctor --online to verify")
+    if online and calico_active_turn and gateway_active_turn:
+        print("PASS Codex active-turn bridge: protocol v1 ready")
+    elif online:
+        print("WARN Codex active-turn bridge: DEGRADED; native quota-boundary parity is unavailable")
     provider = context_policy["provider_window"]
     compact_policy = (
         f"exact:{context_policy['compact_trigger']}"

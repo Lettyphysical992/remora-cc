@@ -1,6 +1,6 @@
 # Preserving Codex Active-Turn Fair Use Through the Claude Bridge
 
-> **Status:** Research complete; implementation not started. This document describes the minimum change set needed to preserve native Codex active-turn continuity through Calico Claude and CLIProxyAPI.
+> **Status:** Protocol implementation and contract tests complete for the supported single-credential topology. A live allowance-boundary Turn A test is still pending, so backend fair-use parity is not yet claimed.
 
 ## Contents
 
@@ -9,6 +9,7 @@
 - [Findings](#findings)
 - [Interpretation](#interpretation)
 - [Recommendation](#recommendation)
+- [Implementation status](#implementation-status)
 - [Proposed change set](#proposed-change-set)
 - [Verification](#verification)
 - [Security constraints](#security-constraints)
@@ -48,7 +49,7 @@ This investigation used the following revisions:
 | Component | Revision examined | Purpose |
 |---|---|---|
 | OpenAI Codex | commit [`9e552e9`](https://github.com/openai/codex/tree/9e552e9d15ba52bed7077d5357f3e18e330f8f38) | Establish the native active-turn contract and hard-limit behavior |
-| CLIProxyAPI | deployed `v7.2.67`, commit [`2075f77`](https://github.com/router-for-me/CLIProxyAPI/tree/2075f77) | Trace the actual Claude-to-Codex HTTP executor |
+| CLIProxyAPI | research on deployed `v7.2.67`; implementation based on `v7.2.71` | Trace the original defect and build the bounded compatibility bridge |
 | Calico Claude | Claude Code `2.1.207` patched bundle | Determine whether Claude has a stable user-turn identifier |
 | Home-lab deployment | CLIProxyAPI `v7.2.67` on 2026-07-12 | Compare source behavior with the running gateway and observed 429 sequence |
 
@@ -102,7 +103,7 @@ Claude Code `2.1.207` maintains an internal `prompt_id` whose documented scope i
 
 Hooks, the status line, and OpenTelemetry can observe this value. The Anthropic HTTP request does not expose it: request headers carry session and agent identity, while `metadata.user_id` carries device, account, session, and parent-session data. Static custom-header environment variables and hook subprocesses cannot safely inject a new value into every later request.
 
-Calico can expose this existing identifier with a small adapter. For foreground work, reading the current prompt ID at request construction is sufficient. For a background agent that outlives its spawning prompt, Calico must capture the prompt ID in the agent context at spawn time; otherwise later requests may inherit the next user prompt's global ID.
+Calico can expose this existing identifier with a small adapter. The versioned bridge uses `x-calico-prompt-id` plus `x-calico-active-turn-version: 1`. For foreground work, reading the current prompt ID at request construction is sufficient. For a background agent that outlives its spawning prompt, Calico must capture the prompt ID in the agent context at spawn time; otherwise later requests may inherit the next user prompt's global ID.
 
 ### The observed 429 sequence is not proof of fair-use continuity
 
@@ -134,11 +135,28 @@ flowchart LR
 
 The turn cache should be keyed by credential identity, Claude session ID, Claude agent ID, and Claude prompt ID. The first request creates stable Codex metadata and captures the server state. Tool continuations and retries reuse both. A new prompt ID creates a fresh turn. Count-token and other auxiliary requests must not create or mutate turn state.
 
+## Implementation status
+
+The v1 bridge deliberately advertises support only for one local Codex credential with cooling disabled. This is a correctness boundary, not a convenience default: a round-robin or failover selector can move a continuation to another account before the executor sees it, and Home mode can move it to another proxy instance. Either transition invalidates server-issued state.
+
+| Surface | Implemented behavior | Verification |
+|---|---|---|
+| Calico request scope | Headers are emitted only for Claude's `main` and `subagent` query classes | Auxiliary quota, count-token, compact, and side-query tests pass |
+| Agent causality | Background agents freeze their spawning prompt; nested agents inherit the frozen parent prompt | Unit tests cover main advance, nested spawn, and dormant native launch |
+| Header ownership | Calico writes its reserved headers after custom headers | Forged custom-header test is overwritten by the trusted values |
+| Proxy identity | One turn retains stable installation, session, thread, window, cache, turn ID, and start time across model fallback | Integration and fallback tests pass |
+| Backend state | First successful response captures the first non-empty `x-codex-turn-state`; matching continuations replay it | Fake-backend integration and race tests pass |
+| Hard limit | `usage_limit_reached` deletes and zeroes state and rejects already-waiting duplicates | HTTP hard-terminal and store lifecycle tests pass |
+| Capability | Gateway advertises v1 only when the feature flag, one credential, disabled cooling, and local non-Home topology all agree | Positive and degraded capability tests pass |
+| Live backend | A new turn after exhaustion receives hard 429 | Control observed; pre-boundary Turn A continuation remains pending |
+
+> **Current support boundary:** multi-credential routing, Home/multi-instance deployment, and long-lived teammate processes that accept multiple independent prompts are not advertised by v1. `remora doctor --online` reports `DEGRADED` when either side is absent or the gateway topology is unsafe.
+
 ## Proposed change set
 
 | Component | Required change | Why this owner | Value if changed alone |
 |---|---|---|---|
-| Calico Claude | Add a versioned `x-claude-code-prompt-id` request header | Claude owns the real user-prompt lifecycle | Identifies turns but cannot preserve backend state; insufficient alone |
+| Calico Claude | Add versioned `x-calico-prompt-id` and `x-calico-active-turn-version` request headers | Claude owns the real user-prompt lifecycle | Identifies turns but cannot preserve backend state; insufficient alone |
 | Calico Claude | Capture the spawning prompt ID in per-agent context | Prevent background agents from switching turns after later user input | Required for strict agent causality; a global prompt getter is insufficient |
 | CLIProxyAPI | Key active turns by credential, session, agent, and prompt | Proxy must isolate concurrent sessions and agents | Cannot be reliable without a stable prompt ID |
 | CLIProxyAPI | Generate stable Codex turn metadata for the first request | Backend should see the same identity shape across every continuation | Helpful but incomplete without server-issued state replay |
@@ -162,7 +180,7 @@ The turn cache should be keyed by credential identity, Claude session ID, Claude
 
 ## Verification
 
-Completion requires contract tests before a real quota-boundary test.
+Contract tests are complete for the v1 topology. The real quota-boundary test remains the release acceptance for any claim of backend fair-use parity.
 
 | Test layer | Required assertion |
 |---|---|

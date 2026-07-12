@@ -183,6 +183,34 @@ class RemoraTests(unittest.TestCase):
             with self.assertRaisesRegex(remora.RemoraError, "requires a Calico"):
                 remora.build_launch(config, [])
 
+    def test_calico_active_turn_marker_is_detected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "claude"
+            binary.write_bytes(
+                b"calico-active-turn-adapter:v1 x-calico-prompt-id "
+                b"x-calico-active-turn-version"
+            )
+            binary.chmod(0o755)
+            with mock.patch.object(remora.shutil, "which", return_value=str(binary)):
+                self.assertTrue(remora.calico_active_turn_supported("claude"))
+
+    def test_calico_active_turn_marker_is_unavailable_when_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "claude"
+            binary.write_bytes(b"stock-claude")
+            binary.chmod(0o755)
+            with mock.patch.object(remora.shutil, "which", return_value=str(binary)):
+                self.assertFalse(remora.calico_active_turn_supported("claude"))
+
+    def test_gateway_active_turn_capability_header(self) -> None:
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.headers = {remora.GATEWAY_ACTIVE_TURN_HEADER: "1"}
+        with mock.patch.object(remora.urllib.request, "urlopen", return_value=response):
+            self.assertTrue(
+                remora.gateway_active_turn_supported(self.config, "hidden-token")
+            )
+
     def test_context_policy_uses_fallback_for_missing_model_metadata(self) -> None:
         with mock.patch.object(
             remora,

@@ -10,6 +10,7 @@
 - [透過 GUI 完成 Codex OAuth](#透過-gui-完成-codex-oauth)
 - [連接 remora](#連接-remora)
 - [模型設定](#模型設定)
+- [實驗性 active-turn bridge](#實驗性-active-turn-bridge)
 - [429 與 cooldown](#429-與-cooldown)
 - [資料與備份](#資料與備份)
 
@@ -235,6 +236,35 @@ remora 會做同一個唯讀查詢，但安全預設遵循原生 Claude Code 對
 | `[context].effective_window_percent` | 診斷用 effective-input 比例；Codex 預設 95% |
 | `[context].auto_compact_percent` | Child auto-compaction 比例；Codex 預設 90% |
 | 既有 Claude auto-compact 環境變數 | 使用者明確 override，優先級最高 |
+
+## 實驗性 active-turn bridge
+
+目前 stock `eceasy/cli-proxy-api:latest` 不會在 Claude 分開送出的 tool-result request 之間保存 Codex `x-codex-turn-state`。相容 build 必須包含 v1 bridge，並明確啟用：
+
+```yaml
+codex:
+  active-turn-bridge: true
+```
+
+Version 1 只在安全拓撲下啟用，否則 fail closed：
+
+| 必要條件 | 原因 |
+|---|---|
+| 只有一個啟用中的 Codex credential | Backend turn token 屬於取得它的 credential |
+| 該 credential 設定 `disable_cooling: true`，或全域關閉 cooling | Selector 不得在 continuation 到達 executor 前隱藏 credential |
+| 只有一個本地 CLIProxyAPI process | Turn state 只存在 bounded process memory，不會寫入 Home KV |
+| Calico binary 含 `calico-active-turn-adapter:v1` | Stock Claude 不會傳送穩定的 user-prompt boundary |
+| `remora doctor --online` 顯示 protocol v1 ready | Binary 與 gateway capability 必須同時吻合 |
+
+所有條件都成立時，gateway 才會回傳：
+
+```text
+X-CLIProxyAPI-Codex-Active-Turn: 1
+```
+
+多 credential 或 Home mode 會直接移除 capability header，不會靜默使用不安全 failover。Raw backend turn state 只保留在有上限的 process memory；request log 必須遮蔽原值，debug 診斷也只能記錄截短的 SHA-256 fingerprint。
+
+> **可用性：** 這項 bridge 尚未進入 upstream CLIProxyAPI `v7.2.71`。在 remora 維護 build 或 upstream release 發布前，上方的一般部署仍會安裝 stock gateway，`doctor --online` 也會如實顯示 active-turn mode 為 degraded。
 
 ## 429 與 cooldown
 

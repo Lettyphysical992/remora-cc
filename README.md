@@ -226,7 +226,7 @@ Useful diagnostics:
 | Command | Result |
 |---|---|
 | `remora doctor` | Validate binary, configuration, agent rendering, and secret retrieval |
-| `remora doctor --online` | Also verify gateway models and report detected context ceilings |
+| `remora doctor --online` | Also verify gateway models, context ceilings, and the optional active-turn protocol |
 | `remora agents` | Show effective role/model/effort assignments |
 | `remora render-agents` | Print the exact JSON supplied through `--agents` |
 | `remora dry-run --continue` | Print a token-free launch preview |
@@ -254,6 +254,7 @@ The strongest behavioral check is simply to run both commands. `remora agents` s
 | Every role resolves to the main model | Gateway ids were excluded by Claude Code's `availableModels` | Upgrade to remora 0.1.4; `doctor` must print all configured ids in the routing allowlist |
 | Resumed agents still use an old model map | `/resume` restored session-scoped agent definitions from the old transcript | Start a fresh remora session or hand off into a new session after changing routing |
 | `All credentials ... are cooling down` | The gateway locally suspended the only credential/model after an upstream 429 | Wait for reset, add failover credentials, lower concurrency, or restart only as a last-resort state reset |
+| `Codex active-turn bridge: DEGRADED` | Calico, gateway capability, or the supported one-credential topology is absent | Active work may stop at a quota boundary; follow the experimental gateway runbook or treat stock behavior as expected |
 | Models work but names differ | The gateway exposes aliases different from this example | Update `[models]` and `[agent_models]` |
 | `Your input exceeds the context window` | The selected client mode and provider ceiling disagree | Run `remora doctor --online`; use the 200K `stock` default or install Calico before selecting `calico` |
 | Native Claude also uses the gateway | Gateway variables were exported globally in the shell | Remove global `ANTHROPIC_*` exports; let remora set them for its child |
@@ -262,6 +263,8 @@ The strongest behavioral check is simply to run both commands. `remora agents` s
 | `claude.ai connectors are disabled` warning | Claude Code detected remora's child-only gateway auth instead of the native Claude login | Expected inside remora; run plain `claude` when claude.ai connectors are required |
 
 > ⚠️ **Do not disable gateway cooldown globally as the first fix.** A real upstream rate limit can become a retry storm. The safer order is lower concurrency, bounded retry, multiple credentials, and correct classification of transient versus quota 429 responses.
+
+The experimental active-turn bridge is the narrow exception: v1 deliberately requires one credential with cooling disabled and refuses to advertise support for multi-account or Home routing. See the [gateway runbook](./docs/cliproxyapi.md#experimental-active-turn-bridge).
 
 ## Operational security
 
