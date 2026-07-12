@@ -250,7 +250,7 @@ Neither path touches `~/.claude`.
 
 ## Prior art
 
-Remora packages a narrow technique rather than inventing multi-agent routing. [pilotfish](https://github.com/Nanako0129/pilotfish) established the role-based orchestration pattern; use it when you want to study or customize the global-policy version of this design. Anthropic documents dynamic session agents and custom LLM gateways; [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) supplies the protocol bridge. [Overdeck](https://github.com/eltmon/overdeck) is a much larger orchestration platform that can manage its own CLIProxyAPI sidecar. Remora's contribution is the opposite scope choice: one auditable, installable launcher for an existing gateway, with no mutation of native Claude state.
+Remora packages a narrow technique rather than inventing multi-agent routing. [pilotfish](https://github.com/Nanako0129/pilotfish) established the role-based orchestration pattern; use it when you want to study or customize the global-policy version of this design. Anthropic documents dynamic session agents and custom LLM gateways; [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) supplies the protocol bridge. Remora's contribution is one auditable, installable launcher for an existing gateway, with no mutation of native Claude state.
 
 ## License
 
