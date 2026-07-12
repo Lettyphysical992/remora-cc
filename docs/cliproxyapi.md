@@ -216,11 +216,16 @@ curl -fsS \
   | jq '.models[] | select(.slug | startswith("gpt-5.6-")) | {slug, context_window}'
 ```
 
-Remora performs the same lookup read-only at launch and mirrors Codex CLI's own ratios. With a 372K provider window, 95% effective context is 353.4K and the 90% compact trigger is 334.8K. Remora injects `CLAUDE_CODE_AUTO_COMPACT_WINDOW=372000` and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=90` only into its Claude Code child. CLIProxyAPI needs no configuration change, custom image, or restart.
+Remora performs the lookup read-only, but its safe default follows stock Claude Code's 200K limit for unknown custom model ids. In `stock` mode it does not inject context or compact overrides; Claude's native output reserve and precompute policy remain authoritative. CLIProxyAPI needs no change or restart.
+
+The optional `calico` mode requires a verified Calico Claude binary. It passes an exact model/window map from the same catalog into Calico's dormant adapter. With a 372K provider window, status-line consumers see 353.4K usable context and compaction begins near 334.8K. Remora refuses to launch this mode if the binary does not contain the adapter marker.
 
 | Source | Meaning |
 |---|---|
 | Gateway `context_window` | Preferred operational ceiling |
+| `[context].mode = "stock"` | Stock-safe 200K client behavior; default |
+| `[context].mode = "calico"` | Explicit opt-in to the verified custom-context adapter |
+| `[context].stock_window` | Stock Claude Code custom-model window, normally 200K |
 | `[context].fallback_window` | Conservative value used when catalog lookup is unavailable or incomplete |
 | `[context].effective_window_percent` | Diagnostic effective-input ratio; Codex defaults to 95% |
 | `[context].auto_compact_percent` | Child auto-compaction ratio; Codex defaults to 90% |

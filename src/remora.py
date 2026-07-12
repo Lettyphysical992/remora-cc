@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 ROOT = Path(__file__).resolve().parent.parent
 AGENTS_FILE = ROOT / "agents" / "agents.json"
 DEFAULT_CONFIG = Path.home() / ".config" / "remora-cc" / "config.toml"
@@ -25,11 +25,15 @@ MODEL_ENV = {
     "default_sonnet": "ANTHROPIC_DEFAULT_SONNET_MODEL",
     "default_haiku": "ANTHROPIC_DEFAULT_HAIKU_MODEL",
 }
-DEFAULT_CONTEXT_WINDOW = 372_000
+DEFAULT_CONTEXT_MODE = "stock"
+DEFAULT_STOCK_CONTEXT_WINDOW = 200_000
+DEFAULT_PROVIDER_CONTEXT_WINDOW = 372_000
 DEFAULT_EFFECTIVE_CONTEXT_PERCENT = 95
 DEFAULT_AUTO_COMPACT_PERCENT = 90
 AUTO_COMPACT_ENV = "CLAUDE_CODE_AUTO_COMPACT_WINDOW"
 AUTO_COMPACT_PERCENT_ENV = "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"
+CALICO_CONTEXT_MAP_ENV = "CALICO_MODEL_CONTEXT_WINDOWS"
+CALICO_DISPLAY_PERCENT_ENV = "CALICO_CONTEXT_DISPLAY_PERCENT"
 
 
 class RemoraError(RuntimeError):
@@ -76,11 +80,17 @@ def validate_config(config: dict[str, Any]) -> None:
             raise RemoraError(f"agent_effort.{name} is missing")
 
     context = config.get("context", {})
+    mode = str(context.get("mode", DEFAULT_CONTEXT_MODE)).strip().lower()
+    if mode not in {"stock", "calico"}:
+        raise RemoraError("context.mode must be 'stock' or 'calico'")
     discovery = context.get("discovery", True)
     if not isinstance(discovery, bool):
         raise RemoraError("context.discovery must be true or false")
     fallback_window = context_integer(
-        context, "fallback_window", DEFAULT_CONTEXT_WINDOW, minimum=1
+        context, "fallback_window", DEFAULT_PROVIDER_CONTEXT_WINDOW, minimum=1
+    )
+    context_integer(
+        context, "stock_window", DEFAULT_STOCK_CONTEXT_WINDOW, minimum=1
     )
     effective_percent = context_percentage(
         context, "effective_window_percent", DEFAULT_EFFECTIVE_CONTEXT_PERCENT
@@ -226,8 +236,12 @@ def resolve_context_policy(
             )
 
     context = config.get("context", {})
+    mode = str(context.get("mode", DEFAULT_CONTEXT_MODE)).strip().lower()
+    stock_window = context_integer(
+        context, "stock_window", DEFAULT_STOCK_CONTEXT_WINDOW, minimum=1
+    )
     fallback_window = context_integer(
-        context, "fallback_window", DEFAULT_CONTEXT_WINDOW, minimum=1
+        context, "fallback_window", DEFAULT_PROVIDER_CONTEXT_WINDOW, minimum=1
     )
     effective_percent = context_percentage(
         context, "effective_window_percent", DEFAULT_EFFECTIVE_CONTEXT_PERCENT
@@ -259,18 +273,40 @@ def resolve_context_policy(
         except (OSError, ValueError, json.JSONDecodeError, RemoraError) as exc:
             warnings.append(f"context discovery failed: {exc}")
 
-    auto_compact_window = explicit_window or provider_window
-    auto_compact_percent = explicit_percent or configured_compact_percent
-    effective_window = provider_window * effective_percent // 100
-    compact_trigger = auto_compact_window * auto_compact_percent // 100
+    client_window = provider_window if mode == "calico" else stock_window
+    auto_compact_window = (
+        explicit_window or provider_window
+        if mode == "calico"
+        else explicit_window
+    )
+    auto_compact_percent = (
+        explicit_percent or configured_compact_percent
+        if mode == "calico"
+        else explicit_percent
+    )
+    effective_window = (
+        provider_window * effective_percent // 100
+        if mode == "calico"
+        else stock_window
+    )
+    compact_trigger = (
+        auto_compact_window * auto_compact_percent // 100
+        if mode == "calico"
+        else None
+    )
     if explicit_window is not None or explicit_percent is not None:
         source += "+environment"
-    if auto_compact_window > provider_window:
+    if auto_compact_window is not None and auto_compact_window > provider_window:
         warnings.append(
             f"explicit {AUTO_COMPACT_ENV}={auto_compact_window} exceeds detected "
             f"gateway ceiling {provider_window}"
         )
-    if compact_trigger > effective_window:
+    if mode == "stock" and auto_compact_window is not None and auto_compact_window > stock_window:
+        warnings.append(
+            f"explicit {AUTO_COMPACT_ENV}={auto_compact_window} exceeds stock Claude "
+            f"Code custom-model window {stock_window} and will be capped"
+        )
+    if compact_trigger is not None and compact_trigger > effective_window:
         warnings.append(
             f"compact trigger {compact_trigger} exceeds effective context {effective_window}"
         )
@@ -278,6 +314,9 @@ def resolve_context_policy(
         "auto_compact_window": auto_compact_window,
         "auto_compact_percent": auto_compact_percent,
         "compact_trigger": compact_trigger,
+        "mode": mode,
+        "client_window": client_window,
+        "stock_window": stock_window,
         "provider_window": provider_window,
         "effective_window": effective_window,
         "effective_window_percent": effective_percent,
@@ -293,6 +332,24 @@ def has_option(args: list[str], long_name: str, short_name: str | None = None) -
             return True
         if short_name and arg == short_name:
             return True
+    return False
+
+
+def calico_context_supported(claude_binary: str) -> bool:
+    resolved = shutil.which(claude_binary)
+    if not resolved:
+        return False
+    marker = CALICO_CONTEXT_MAP_ENV.encode("ascii")
+    overlap = b""
+    try:
+        with Path(resolved).open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                block = overlap + chunk
+                if marker in block:
+                    return True
+                overlap = block[-len(marker) :]
+    except OSError:
+        return False
     return False
 
 
@@ -333,8 +390,30 @@ def build_launch(
         env.pop("CLAUDE_CODE_SUBAGENT_MODEL", None)
 
     context_policy = resolve_context_policy(config, token=token, online=require_token)
-    env[AUTO_COMPACT_ENV] = str(context_policy["auto_compact_window"])
-    env[AUTO_COMPACT_PERCENT_ENV] = str(context_policy["auto_compact_percent"])
+    if context_policy["mode"] == "calico" and not calico_context_supported(claude_bin):
+        raise RemoraError(
+            "context.mode='calico' requires a Calico Claude binary containing the "
+            "custom-context-window patch; install Calico or switch to mode='stock'"
+        )
+    if context_policy["auto_compact_window"] is not None:
+        env[AUTO_COMPACT_ENV] = str(context_policy["auto_compact_window"])
+    if context_policy["auto_compact_percent"] is not None:
+        env[AUTO_COMPACT_PERCENT_ENV] = str(context_policy["auto_compact_percent"])
+    if context_policy["mode"] == "calico":
+        fallback = context_policy["provider_window"]
+        windows = {
+            name: context_policy["model_windows"].get(name, fallback)
+            for name in configured_model_names(config)
+        }
+        env[CALICO_CONTEXT_MAP_ENV] = json.dumps(
+            windows, ensure_ascii=True, separators=(",", ":")
+        )
+        env[CALICO_DISPLAY_PERCENT_ENV] = str(
+            context_policy["effective_window_percent"]
+        )
+    else:
+        env.pop(CALICO_CONTEXT_MAP_ENV, None)
+        env.pop(CALICO_DISPLAY_PERCENT_ENV, None)
 
     return [claude_bin, *prefix, *args], env
 
@@ -371,15 +450,28 @@ def doctor(config: dict[str, Any], online: bool) -> int:
         print("PASS global subagent override: absent")
 
     context_policy = resolve_context_policy(config, token=token, online=online)
+    if context_policy["mode"] == "calico":
+        if claude_path and calico_context_supported(claude_bin):
+            print("PASS Calico context adapter: custom-context-window marker present")
+        else:
+            failures += 1
+            print("FAIL Calico context adapter: custom-context-window marker not found")
     provider = context_policy["provider_window"]
+    compact_policy = (
+        f"exact:{context_policy['compact_trigger']}"
+        if context_policy["compact_trigger"] is not None
+        else "native-claude"
+    )
     print(
         "PASS context policy: "
+        f"mode={context_policy['mode']} "
         f"source={context_policy['source']} "
         f"provider_window={provider} "
+        f"client_window={context_policy['client_window']} "
         f"effective_window={context_policy['effective_window']} "
         f"auto_compact_window={context_policy['auto_compact_window']} "
         f"auto_compact_percent={context_policy['auto_compact_percent']} "
-        f"compact_trigger={context_policy['compact_trigger']}"
+        f"compact_policy={compact_policy}"
     )
     for name, window in sorted(context_policy["model_windows"].items()):
         print(f"PASS model context: {name}={window}")
@@ -419,6 +511,8 @@ def dry_run(config: dict[str, Any], args: list[str]) -> None:
             "CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY",
             "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
             "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
+            "CALICO_MODEL_CONTEXT_WINDOWS",
+            "CALICO_CONTEXT_DISPLAY_PERCENT",
             "ENABLE_TOOL_SEARCH",
         ]
         if key in env

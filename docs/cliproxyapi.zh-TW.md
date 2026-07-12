@@ -221,11 +221,16 @@ curl -fsS \
   | jq '.models[] | select(.slug | startswith("gpt-5.6-")) | {slug, context_window}'
 ```
 
-Remora 啟動時會做同一個唯讀查詢，並比照 Codex CLI 的比例。Provider window 為 372K 時，95% effective context 是 353.4K，90% compact trigger 是 334.8K。Remora 只在 Claude Code child 注入 `CLAUDE_CODE_AUTO_COMPACT_WINDOW=372000` 與 `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=90`。CLIProxyAPI 不需要改 config、換自訂 image 或重啟。
+Remora 會做同一個唯讀查詢，但安全預設遵循原生 Claude Code 對未知 custom model id 的 200K 上限。`stock` 模式不注入 context 或 compact override；Claude 原生的 output reserve 與 precompute policy 維持權威。CLIProxyAPI 不需要修改或重啟。
+
+可選的 `calico` 模式必須搭配通過驗證的 Calico Claude binary。Remora 會把同一份 catalog 轉成逐一對應的 model/window map，交給 Calico 預設休眠的 adapter。Provider window 為 372K 時，statusline consumer 看到 353.4K usable context，約 334.8K compact。Binary 沒有 adapter marker 時，Remora 會拒絕啟動該模式。
 
 | 來源 | 意義 |
 |---|---|
 | Gateway `context_window` | 優先採用的實際 ceiling |
+| `[context].mode = "stock"` | 原生安全的 200K client 行為；預設值 |
+| `[context].mode = "calico"` | 明確選用已驗證的 custom-context adapter |
+| `[context].stock_window` | 原生 Claude Code 的 custom-model window，通常是 200K |
 | `[context].fallback_window` | Catalog 查不到或不完整時的保守值 |
 | `[context].effective_window_percent` | 診斷用 effective-input 比例；Codex 預設 95% |
 | `[context].auto_compact_percent` | Child auto-compaction 比例；Codex 預設 90% |

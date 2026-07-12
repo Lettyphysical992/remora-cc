@@ -29,12 +29,13 @@ Collect and report the following without changing anything:
 | Native Claude boundary | Record a sorted path manifest of `~/.claude` for post-install comparison; do not read credential contents |
 | Gateway | Ask only whether an Anthropic Messages-compatible gateway exists and what base URL should be configured; if absent, point to `docs/cliproxyapi.md` and keep OAuth as a human handoff |
 | Secret source | Ask whether the user will use an environment variable or an OS credential command; never ask for the secret value |
+| Context mode | Offer `stock` (official Claude binary, 200K/180K, recommended) and `calico` (separately installed patched binary, provider-sized context). Never select or install Calico implicitly |
 
 If the executable path already exists and is not a symlink owned by Remora, treat it as a conflict and stop. If a configuration exists, preserve it and report that installation will not edit it.
 
 ## Step 2 — Approval gate
 
-Present one table covering every proposed write, download source, release version, verification method, preserved file, conflict, and rollback action. Explicitly state that `~/.claude` and the native `claude` executable will not be written. Wait for an unambiguous approval before continuing.
+Present one table covering every proposed write, download source, release version, verification method, preserved file, conflict, context-mode choice, and rollback action. Explicitly state that this Remora runbook will not write `~/.claude` or replace the native `claude` executable. If the user wants `calico`, disclose that its separate installation replaces the native binary and requires its own source review and approval. Wait for an unambiguous approval before continuing.
 
 > ⚠️ **No approval means no installation.** Reading this runbook is not permission to mutate the machine.
 
@@ -58,7 +59,9 @@ Do not choose the weaker mode on the user's behalf. Do not pipe the remote scrip
 
 ## Step 4 — Configure without handling secrets
 
-If the configuration was newly created, edit only the non-secret gateway address and model aliases approved by the user. For an environment-variable setup, leave `auth_token_command` empty. For an OS credential store, configure a direct argument array that does not invoke a shell.
+If the configuration was newly created, edit only the non-secret gateway address, model aliases, and context mode approved by the user. For an environment-variable setup, leave `auth_token_command` empty. For an OS credential store, configure a direct argument array that does not invoke a shell.
+
+Keep `context.mode = "stock"` unless a Calico binary containing the literal `CALICO_MODEL_CONTEXT_WINDOWS` marker is already installed and the user explicitly selected `calico`. If Calico is requested but absent, finish the safe Remora installation in `stock` mode and hand off to the [Calico Claude trust and install documentation](https://github.com/Nanako0129/calico-claude); do not pipe its remote installer into a shell or replace `claude` under this approval.
 
 Never place a bearer token in TOML. OAuth enrollment and CLIProxyAPI GUI actions remain a human handoff outside Remora.
 

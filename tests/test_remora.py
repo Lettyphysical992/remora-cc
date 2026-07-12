@@ -52,8 +52,9 @@ class RemoraTests(unittest.TestCase):
         payload = json.loads(command[command.index("--agents") + 1])
         self.assertEqual(payload["scout"]["model"], "gpt-5.6-luna")
         self.assertEqual(env["ANTHROPIC_AUTH_TOKEN"], "test-secret")
-        self.assertEqual(env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "372000")
-        self.assertEqual(env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"], "90")
+        self.assertNotIn("CLAUDE_CODE_AUTO_COMPACT_WINDOW", env)
+        self.assertNotIn("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", env)
+        self.assertNotIn("CALICO_MODEL_CONTEXT_WINDOWS", env)
         self.assertNotIn("CLAUDE_CODE_SUBAGENT_MODEL", env)
         self.assertEqual(os.environ["CLAUDE_CODE_SUBAGENT_MODEL"], "wrong")
 
@@ -94,10 +95,11 @@ class RemoraTests(unittest.TestCase):
         policy = remora.resolve_context_policy(self.config)
         self.assertEqual(policy["source"], "fallback")
         self.assertEqual(policy["provider_window"], 372000)
-        self.assertEqual(policy["effective_window"], 353400)
-        self.assertEqual(policy["auto_compact_window"], 372000)
-        self.assertEqual(policy["auto_compact_percent"], 90)
-        self.assertEqual(policy["compact_trigger"], 334800)
+        self.assertEqual(policy["client_window"], 200000)
+        self.assertEqual(policy["effective_window"], 200000)
+        self.assertIsNone(policy["auto_compact_window"])
+        self.assertIsNone(policy["auto_compact_percent"])
+        self.assertIsNone(policy["compact_trigger"])
 
     def test_context_policy_uses_smallest_configured_gateway_window(self) -> None:
         windows = {
@@ -113,8 +115,8 @@ class RemoraTests(unittest.TestCase):
             )
         self.assertEqual(policy["source"], "gateway")
         self.assertEqual(policy["provider_window"], 372000)
-        self.assertEqual(policy["effective_window"], 353400)
-        self.assertEqual(policy["compact_trigger"], 334800)
+        self.assertEqual(policy["effective_window"], 200000)
+        self.assertIsNone(policy["compact_trigger"])
 
     def test_context_policy_falls_back_when_discovery_fails(self) -> None:
         with mock.patch.object(
@@ -124,9 +126,40 @@ class RemoraTests(unittest.TestCase):
                 self.config, token="hidden", online=True
             )
         self.assertEqual(policy["source"], "fallback")
-        self.assertEqual(policy["auto_compact_window"], 372000)
-        self.assertEqual(policy["compact_trigger"], 334800)
+        self.assertIsNone(policy["auto_compact_window"])
+        self.assertIsNone(policy["compact_trigger"])
         self.assertIn("discovery failed", policy["warning"])
+
+    @mock.patch.dict(os.environ, {"REMORA_AUTH_TOKEN": "test-secret"}, clear=True)
+    def test_calico_mode_uses_provider_window_and_exports_exact_map(self) -> None:
+        config = json.loads(json.dumps(self.config))
+        config["context"]["mode"] = "calico"
+        windows = {
+            "gpt-5.6-sol": 372000,
+            "gpt-5.6-terra": 372000,
+            "gpt-5.6-luna": 372000,
+        }
+        with (
+            mock.patch.object(
+                remora, "fetch_gateway_context_windows", return_value=windows
+            ),
+            mock.patch.object(remora, "calico_context_supported", return_value=True),
+        ):
+            _, env = remora.build_launch(config, [])
+        self.assertEqual(env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "372000")
+        self.assertEqual(env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"], "90")
+        self.assertEqual(env["CALICO_CONTEXT_DISPLAY_PERCENT"], "95")
+        self.assertEqual(
+            json.loads(env["CALICO_MODEL_CONTEXT_WINDOWS"]), windows
+        )
+
+    @mock.patch.dict(os.environ, {"REMORA_AUTH_TOKEN": "test-secret"}, clear=True)
+    def test_calico_mode_fails_closed_without_context_patch(self) -> None:
+        config = json.loads(json.dumps(self.config))
+        config["context"]["mode"] = "calico"
+        with mock.patch.object(remora, "calico_context_supported", return_value=False):
+            with self.assertRaisesRegex(remora.RemoraError, "requires a Calico"):
+                remora.build_launch(config, [])
 
     def test_context_policy_uses_fallback_for_missing_model_metadata(self) -> None:
         with mock.patch.object(
@@ -159,7 +192,7 @@ class RemoraTests(unittest.TestCase):
             )
         self.assertEqual(policy["source"], "gateway+environment")
         self.assertEqual(policy["auto_compact_window"], 300000)
-        self.assertEqual(policy["compact_trigger"], 270000)
+        self.assertIsNone(policy["compact_trigger"])
 
     @mock.patch.dict(
         os.environ, {"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "85"}, clear=False
@@ -168,12 +201,13 @@ class RemoraTests(unittest.TestCase):
         policy = remora.resolve_context_policy(self.config)
         self.assertEqual(policy["source"], "fallback+environment")
         self.assertEqual(policy["auto_compact_percent"], 85)
-        self.assertEqual(policy["compact_trigger"], 316200)
+        self.assertIsNone(policy["compact_trigger"])
 
     @mock.patch.dict(
         os.environ, {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000"}, clear=False
     )
     @mock.patch.object(remora, "resolve_auth_token", return_value="hidden")
+    @mock.patch.object(remora.shutil, "which", return_value="/usr/bin/claude")
     @mock.patch.object(
         remora,
         "fetch_gateway_context_windows",
@@ -185,7 +219,11 @@ class RemoraTests(unittest.TestCase):
     )
     @mock.patch.object(remora.urllib.request, "urlopen")
     def test_doctor_warns_when_override_exceeds_gateway(
-        self, urlopen: mock.Mock, _fetch: mock.Mock, _token: mock.Mock
+        self,
+        urlopen: mock.Mock,
+        _fetch: mock.Mock,
+        _which: mock.Mock,
+        _token: mock.Mock,
     ) -> None:
         response = mock.MagicMock()
         response.status = 200
@@ -208,8 +246,8 @@ class RemoraTests(unittest.TestCase):
         with redirect_stdout(output):
             remora.dry_run(self.config, [])
         self.assertNotIn("do-not-print", output.getvalue())
-        self.assertIn('"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "372000"', output.getvalue())
-        self.assertIn('"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "90"', output.getvalue())
+        self.assertNotIn('"CLAUDE_CODE_AUTO_COMPACT_WINDOW"', output.getvalue())
+        self.assertNotIn('"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"', output.getvalue())
 
 
 if __name__ == "__main__":

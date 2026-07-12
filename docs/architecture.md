@@ -67,7 +67,7 @@ The split follows capability and token volume rather than file ownership. Read-o
 
 Claude Code speaks the Anthropic Messages protocol, while the selected models may be OpenAI models. The gateway owns protocol translation, OAuth, model aliases, cooldown, retries, and account selection. Remora owns none of those concerns; it only chooses the gateway-visible model string for each role.
 
-Context capacity crosses that boundary: the gateway catalog is authoritative for the provider route, while Remora translates the reported ceiling into Claude Code's client-side auto-compaction policy. Remora queries `/v1/models?client_version=remora`, takes the minimum across configured models, reports Codex's 95% effective window, and applies Codex's 90% compact ratio through child-only environment variables. Discovery is read-only and falls back to TOML; it never rewrites gateway metadata.
+Context capacity crosses that boundary: the gateway catalog is authoritative for the provider route, but stock Claude Code assigns unknown custom model ids a 200K client window. Remora's default `stock` policy therefore reports the truthful 200K window and leaves Claude's native compact pipeline untouched. The optional `calico` policy queries `/v1/models?client_version=remora`, takes the minimum across configured models, supplies an exact child-only model/window map to a separately verified Calico binary, reports 95% usable context, and applies the 90% compact ratio exactly once to the raw mapped window. Discovery is read-only and falls back to TOML; it never rewrites gateway metadata.
 
 This separation makes failures diagnosable:
 

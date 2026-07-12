@@ -39,6 +39,12 @@ Remora is a launcher, not a sandbox. Claude Code keeps its normal filesystem and
 | OpenAI account | Processes content forwarded by the gateway and enforces its own quota and retention policy |
 | Native Claude session | Unchanged unless the user separately exports gateway variables globally |
 
+## Optional Calico mode
+
+`context.mode = "calico"` is a separate trust decision. Remora itself still does not replace Claude Code, but this mode only works with a patched Calico Claude binary. Calico changes the executable supply chain and must be reviewed, installed, verified, and rolled back independently.
+
+Remora fails closed by scanning the selected binary for the `custom-context-window` capability marker before launch. The child receives an exact JSON model/window map containing no credentials. Calico accepts only exact model ids and integer windows from 100K through 1M; malformed or missing values fall back to Claude Code's stock behavior. The public Remora installer defaults to `stock` and never installs Calico implicitly.
+
 ## Secret handling
 
 Do not place a bearer token directly in `config.toml`, commit an OAuth `auths` directory, or paste debug logs into an issue without inspection. Prefer an OS credential store and keep the TOML command array free of shell syntax.

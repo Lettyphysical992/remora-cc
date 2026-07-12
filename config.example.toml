@@ -14,12 +14,14 @@ default_sonnet = "gpt-5.6-terra"
 default_haiku = "gpt-5.6-luna"
 
 [context]
-# CLIProxyAPI's Codex OAuth catalog currently reports 372K for GPT-5.6.
-# Codex treats 95% as effective context and compacts at 90% of the raw window.
-# Remora mirrors those ratios in its Claude Code child. Discovery takes precedence.
+# Safe default for the stock Claude Code binary. Unknown custom models are 200K
+# unless the user explicitly installs Calico Claude and selects mode = "calico".
+mode = "stock"
+stock_window = 200000
 discovery = true
 fallback_window = 372000
 effective_window_percent = 95
+# Used only by mode = "calico". Stock mode leaves Claude's compact pipeline untouched.
 auto_compact_percent = 90
 
 [agent_models]
