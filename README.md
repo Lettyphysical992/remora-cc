@@ -72,6 +72,20 @@ Claude Code's built-in aliases remain useful escape hatches: Opus defaults to So
 | `verifier` | `gpt-5.6-sol` | high | Independent adversarial verification |
 | `security-executor` | `gpt-5.6-sol` | max | Security-sensitive work |
 
+### Context safety
+
+OpenAI's public GPT-5.6 API advertises a 1.05M context window, but CLIProxyAPI's Codex OAuth catalog currently reports 372K for Sol, Terra, and Luna. Remora treats the gateway catalog as the operational limit instead of assuming that the public API limit applies to a subscription/OAuth route.
+
+At launch, Remora reads the gateway's Codex-compatible model catalog and takes the smallest window among every configured main and agent model. It then mirrors Codex CLI's policy: 95% is effective context and automatic compaction starts at 90% of the raw provider window. With the current 372K catalog this means 353.4K effective context and a 334.8K compact trigger. Remora passes the raw window and compact percentage to its Claude Code child; a failed or incomplete lookup falls back conservatively and never changes CLIProxyAPI or native Claude.
+
+```toml
+[context]
+discovery = true
+fallback_window = 372000
+effective_window_percent = 95
+auto_compact_percent = 90
+```
+
 ## Who it is for
 
 Remora is for developers who prefer Claude Code's interaction model but want their coding work executed by a tiered GPT-5.6 fleet. It is especially useful when a single frontier model for every subtask is unnecessarily expensive.
@@ -121,7 +135,7 @@ Give Claude Code this prompt. The immutable tag is intentional:
 
 ```text
 Read and follow this installation runbook:
-https://raw.githubusercontent.com/Nanako0129/remora-cc/v0.1.1/install/AGENT-INSTALL.md
+https://raw.githubusercontent.com/Nanako0129/remora-cc/v0.1.2/install/AGENT-INSTALL.md
 
 Perform only the read-only preflight first. Show every proposed filesystem
 change, trust boundary, download source, and verification step. Do not write
@@ -133,7 +147,7 @@ The runbook will not ask for a bearer token or OAuth file. It stops at an approv
 ### Manual source install
 
 ```bash
-git clone --branch v0.1.1 --depth 1 https://github.com/Nanako0129/remora-cc.git
+git clone --branch v0.1.2 --depth 1 https://github.com/Nanako0129/remora-cc.git
 cd remora-cc
 ./install.sh
 ```
@@ -198,7 +212,7 @@ Useful diagnostics:
 | Command | Result |
 |---|---|
 | `remora doctor` | Validate binary, configuration, agent rendering, and secret retrieval |
-| `remora doctor --online` | Also call the gateway model endpoint |
+| `remora doctor --online` | Also verify gateway models and report detected context ceilings |
 | `remora agents` | Show effective role/model/effort assignments |
 | `remora render-agents` | Print the exact JSON supplied through `--agents` |
 | `remora dry-run --continue` | Print a token-free launch preview |
@@ -225,6 +239,7 @@ The strongest behavioral check is simply to run both commands. `remora agents` s
 | Agent inherits the main model | A global `CLAUDE_CODE_SUBAGENT_MODEL` overrode the agent map | Remora clears it in the child by default; confirm with `remora doctor` |
 | `All credentials ... are cooling down` | The gateway locally suspended the only credential/model after an upstream 429 | Wait for reset, add failover credentials, lower concurrency, or restart only as a last-resort state reset |
 | Models work but names differ | The gateway exposes aliases different from this example | Update `[models]` and `[agent_models]` |
+| `Your input exceeds the context window` | Claude Code accumulated beyond the gateway provider's operational ceiling | Run `remora doctor --online`; keep context discovery enabled or lower `[context].fallback_window` |
 | Native Claude also uses the gateway | Gateway variables were exported globally in the shell | Remove global `ANTHROPIC_*` exports; let Remora set them for its child |
 | A role is missing | An explicit `--agents` flag replaced Remora's dynamic map | Remove that flag or merge the role into your supplied JSON |
 | `claude.ai connectors are disabled` warning | Claude Code detected Remora's child-only gateway auth instead of the native Claude login | Expected inside Remora; run plain `claude` when claude.ai connectors are required |

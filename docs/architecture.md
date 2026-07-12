@@ -61,10 +61,13 @@ The split follows capability and token volume rather than file ownership. Read-o
 | Verification | Fresh Sol context | Self-review by the implementer |
 | Security | Sol, max effort | Cheap routing at a trust boundary |
 | Configuration | Model names in TOML | Hard-coded provider catalog in prompts |
+| Context safety | Read the gateway ceiling, reserve output space, and scope auto-compaction to the child | Pretending every provider route has the public API's maximum window |
 
 ## Gateway semantics
 
 Claude Code speaks the Anthropic Messages protocol, while the selected models may be OpenAI models. The gateway owns protocol translation, OAuth, model aliases, cooldown, retries, and account selection. Remora owns none of those concerns; it only chooses the gateway-visible model string for each role.
+
+Context capacity crosses that boundary: the gateway catalog is authoritative for the provider route, while Remora translates the reported ceiling into Claude Code's client-side auto-compaction policy. Remora queries `/v1/models?client_version=remora`, takes the minimum across configured models, reports Codex's 95% effective window, and applies Codex's 90% compact ratio through child-only environment variables. Discovery is read-only and falls back to TOML; it never rewrites gateway metadata.
 
 This separation makes failures diagnosable:
 

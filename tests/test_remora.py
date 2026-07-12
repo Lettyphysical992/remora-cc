@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -33,7 +35,16 @@ class RemoraTests(unittest.TestCase):
 
     @mock.patch.dict(os.environ, {"REMORA_AUTH_TOKEN": "test-secret", "CLAUDE_CODE_SUBAGENT_MODEL": "wrong"}, clear=False)
     def test_launch_is_session_scoped_and_clears_global_override(self) -> None:
-        command, env = remora.build_launch(self.config, ["--continue"])
+        with mock.patch.object(
+            remora,
+            "fetch_gateway_context_windows",
+            return_value={
+                "gpt-5.6-sol": 372000,
+                "gpt-5.6-terra": 372000,
+                "gpt-5.6-luna": 372000,
+            },
+        ):
+            command, env = remora.build_launch(self.config, ["--continue"])
         self.assertEqual(command[0], "claude")
         self.assertEqual(command[1:3], ["--model", "gpt-5.6-sol"])
         self.assertEqual(env["ANTHROPIC_DEFAULT_SONNET_MODEL"], "gpt-5.6-terra")
@@ -41,6 +52,8 @@ class RemoraTests(unittest.TestCase):
         payload = json.loads(command[command.index("--agents") + 1])
         self.assertEqual(payload["scout"]["model"], "gpt-5.6-luna")
         self.assertEqual(env["ANTHROPIC_AUTH_TOKEN"], "test-secret")
+        self.assertEqual(env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "372000")
+        self.assertEqual(env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"], "90")
         self.assertNotIn("CLAUDE_CODE_SUBAGENT_MODEL", env)
         self.assertEqual(os.environ["CLAUDE_CODE_SUBAGENT_MODEL"], "wrong")
 
@@ -76,6 +89,127 @@ class RemoraTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {"REMORA_CONFIG": str(path)}):
                 self.assertEqual(remora.config_path(), path)
                 self.assertEqual(remora.load_config()["models"]["main"], "gpt-5.6-sol")
+
+    def test_context_policy_uses_safe_fallback_offline(self) -> None:
+        policy = remora.resolve_context_policy(self.config)
+        self.assertEqual(policy["source"], "fallback")
+        self.assertEqual(policy["provider_window"], 372000)
+        self.assertEqual(policy["effective_window"], 353400)
+        self.assertEqual(policy["auto_compact_window"], 372000)
+        self.assertEqual(policy["auto_compact_percent"], 90)
+        self.assertEqual(policy["compact_trigger"], 334800)
+
+    def test_context_policy_uses_smallest_configured_gateway_window(self) -> None:
+        windows = {
+            "gpt-5.6-sol": 1050000,
+            "gpt-5.6-terra": 500000,
+            "gpt-5.6-luna": 372000,
+        }
+        with mock.patch.object(
+            remora, "fetch_gateway_context_windows", return_value=windows
+        ):
+            policy = remora.resolve_context_policy(
+                self.config, token="hidden", online=True
+            )
+        self.assertEqual(policy["source"], "gateway")
+        self.assertEqual(policy["provider_window"], 372000)
+        self.assertEqual(policy["effective_window"], 353400)
+        self.assertEqual(policy["compact_trigger"], 334800)
+
+    def test_context_policy_falls_back_when_discovery_fails(self) -> None:
+        with mock.patch.object(
+            remora, "fetch_gateway_context_windows", side_effect=OSError("offline")
+        ):
+            policy = remora.resolve_context_policy(
+                self.config, token="hidden", online=True
+            )
+        self.assertEqual(policy["source"], "fallback")
+        self.assertEqual(policy["auto_compact_window"], 372000)
+        self.assertEqual(policy["compact_trigger"], 334800)
+        self.assertIn("discovery failed", policy["warning"])
+
+    def test_context_policy_uses_fallback_for_missing_model_metadata(self) -> None:
+        with mock.patch.object(
+            remora,
+            "fetch_gateway_context_windows",
+            return_value={"gpt-5.6-sol": 1050000},
+        ):
+            policy = remora.resolve_context_policy(
+                self.config, token="hidden", online=True
+            )
+        self.assertEqual(policy["source"], "gateway+fallback")
+        self.assertEqual(policy["provider_window"], 372000)
+        self.assertIn("gpt-5.6-luna", policy["warning"])
+
+    @mock.patch.dict(
+        os.environ, {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "300000"}, clear=False
+    )
+    def test_explicit_auto_compact_environment_wins(self) -> None:
+        with mock.patch.object(
+            remora,
+            "fetch_gateway_context_windows",
+            return_value={
+                "gpt-5.6-sol": 372000,
+                "gpt-5.6-terra": 372000,
+                "gpt-5.6-luna": 372000,
+            },
+        ):
+            policy = remora.resolve_context_policy(
+                self.config, token="hidden", online=True
+            )
+        self.assertEqual(policy["source"], "gateway+environment")
+        self.assertEqual(policy["auto_compact_window"], 300000)
+        self.assertEqual(policy["compact_trigger"], 270000)
+
+    @mock.patch.dict(
+        os.environ, {"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "85"}, clear=False
+    )
+    def test_explicit_auto_compact_percentage_wins(self) -> None:
+        policy = remora.resolve_context_policy(self.config)
+        self.assertEqual(policy["source"], "fallback+environment")
+        self.assertEqual(policy["auto_compact_percent"], 85)
+        self.assertEqual(policy["compact_trigger"], 316200)
+
+    @mock.patch.dict(
+        os.environ, {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000"}, clear=False
+    )
+    @mock.patch.object(remora, "resolve_auth_token", return_value="hidden")
+    @mock.patch.object(
+        remora,
+        "fetch_gateway_context_windows",
+        return_value={
+            "gpt-5.6-sol": 372000,
+            "gpt-5.6-terra": 372000,
+            "gpt-5.6-luna": 372000,
+        },
+    )
+    @mock.patch.object(remora.urllib.request, "urlopen")
+    def test_doctor_warns_when_override_exceeds_gateway(
+        self, urlopen: mock.Mock, _fetch: mock.Mock, _token: mock.Mock
+    ) -> None:
+        response = mock.MagicMock()
+        response.status = 200
+        urlopen.return_value.__enter__.return_value = response
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = remora.doctor(self.config, online=True)
+        self.assertEqual(result, 0)
+        self.assertIn("exceeds detected gateway ceiling 372000", output.getvalue())
+
+    def test_invalid_context_config_is_rejected(self) -> None:
+        config = json.loads(json.dumps(self.config))
+        config["context"]["auto_compact_percent"] = 96
+        with self.assertRaisesRegex(remora.RemoraError, "must not exceed"):
+            remora.validate_config(config)
+
+    @mock.patch.dict(os.environ, {"REMORA_AUTH_TOKEN": "do-not-print"}, clear=False)
+    def test_dry_run_never_prints_gateway_token(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output):
+            remora.dry_run(self.config, [])
+        self.assertNotIn("do-not-print", output.getvalue())
+        self.assertIn('"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "372000"', output.getvalue())
+        self.assertIn('"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "90"', output.getvalue())
 
 
 if __name__ == "__main__":

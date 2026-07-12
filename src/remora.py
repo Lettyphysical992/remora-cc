@@ -10,12 +10,13 @@ import subprocess
 import sys
 import tomllib
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
 
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 ROOT = Path(__file__).resolve().parent.parent
 AGENTS_FILE = ROOT / "agents" / "agents.json"
 DEFAULT_CONFIG = Path.home() / ".config" / "remora-cc" / "config.toml"
@@ -24,6 +25,11 @@ MODEL_ENV = {
     "default_sonnet": "ANTHROPIC_DEFAULT_SONNET_MODEL",
     "default_haiku": "ANTHROPIC_DEFAULT_HAIKU_MODEL",
 }
+DEFAULT_CONTEXT_WINDOW = 372_000
+DEFAULT_EFFECTIVE_CONTEXT_PERCENT = 95
+DEFAULT_AUTO_COMPACT_PERCENT = 90
+AUTO_COMPACT_ENV = "CLAUDE_CODE_AUTO_COMPACT_WINDOW"
+AUTO_COMPACT_PERCENT_ENV = "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"
 
 
 class RemoraError(RuntimeError):
@@ -68,6 +74,41 @@ def validate_config(config: dict[str, Any]) -> None:
             raise RemoraError(f"agent_models.{name} is missing")
         if not str(effort_map.get(name, "")).strip():
             raise RemoraError(f"agent_effort.{name} is missing")
+
+    context = config.get("context", {})
+    discovery = context.get("discovery", True)
+    if not isinstance(discovery, bool):
+        raise RemoraError("context.discovery must be true or false")
+    fallback_window = context_integer(
+        context, "fallback_window", DEFAULT_CONTEXT_WINDOW, minimum=1
+    )
+    effective_percent = context_percentage(
+        context, "effective_window_percent", DEFAULT_EFFECTIVE_CONTEXT_PERCENT
+    )
+    compact_percent = context_percentage(
+        context, "auto_compact_percent", DEFAULT_AUTO_COMPACT_PERCENT
+    )
+    if compact_percent > effective_percent:
+        raise RemoraError(
+            "context.auto_compact_percent must not exceed effective_window_percent"
+        )
+
+
+def context_integer(
+    context: dict[str, Any], key: str, default: int, *, minimum: int
+) -> int:
+    value = context.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        qualifier = "non-negative" if minimum == 0 else "positive"
+        raise RemoraError(f"context.{key} must be a {qualifier} integer")
+    return value
+
+
+def context_percentage(context: dict[str, Any], key: str, default: int) -> int:
+    value = context.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 100:
+        raise RemoraError(f"context.{key} must be an integer from 1 to 100")
+    return value
 
 
 def load_agent_definitions() -> dict[str, dict[str, Any]]:
@@ -123,6 +164,129 @@ def resolve_auth_token(config: dict[str, Any]) -> str:
     raise RemoraError(f"proxy token unavailable from {source}")
 
 
+def configured_model_names(config: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+    for section_name in ("models", "agent_models"):
+        for value in config.get(section_name, {}).values():
+            name = str(value).strip()
+            if name:
+                names.add(name)
+    return names
+
+
+def fetch_gateway_context_windows(config: dict[str, Any], token: str) -> dict[str, int]:
+    base_url = str(config["proxy"]["base_url"]).rstrip("/")
+    query = urllib.parse.urlencode({"client_version": f"remora-{VERSION}"})
+    request = urllib.request.Request(
+        f"{base_url}/v1/models?{query}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    with urllib.request.urlopen(request, timeout=8) as response:
+        payload = json.load(response)
+
+    rows = payload.get("models", payload.get("data", []))
+    if not isinstance(rows, list):
+        raise RemoraError("gateway model catalog has no model list")
+
+    windows: dict[str, int] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("slug") or row.get("id") or "").strip()
+        value = row.get("context_window", row.get("context_length"))
+        if name and isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            windows[name] = value
+    return windows
+
+
+def resolve_context_policy(
+    config: dict[str, Any], *, token: str = "", online: bool = False
+) -> dict[str, Any]:
+    inherited_window = os.environ.get(AUTO_COMPACT_ENV, "").strip()
+    inherited_percent = os.environ.get(AUTO_COMPACT_PERCENT_ENV, "").strip()
+    explicit_window: int | None = None
+    explicit_percent: int | None = None
+    if inherited_window:
+        try:
+            explicit_window = int(inherited_window)
+        except ValueError as exc:
+            raise RemoraError(f"{AUTO_COMPACT_ENV} must be a positive integer") from exc
+        if explicit_window < 1:
+            raise RemoraError(f"{AUTO_COMPACT_ENV} must be a positive integer")
+    if inherited_percent:
+        try:
+            explicit_percent = int(inherited_percent)
+        except ValueError as exc:
+            raise RemoraError(
+                f"{AUTO_COMPACT_PERCENT_ENV} must be an integer from 1 to 100"
+            ) from exc
+        if not 1 <= explicit_percent <= 100:
+            raise RemoraError(
+                f"{AUTO_COMPACT_PERCENT_ENV} must be an integer from 1 to 100"
+            )
+
+    context = config.get("context", {})
+    fallback_window = context_integer(
+        context, "fallback_window", DEFAULT_CONTEXT_WINDOW, minimum=1
+    )
+    effective_percent = context_percentage(
+        context, "effective_window_percent", DEFAULT_EFFECTIVE_CONTEXT_PERCENT
+    )
+    configured_compact_percent = context_percentage(
+        context, "auto_compact_percent", DEFAULT_AUTO_COMPACT_PERCENT
+    )
+    discovery = context.get("discovery", True)
+    provider_window = fallback_window
+    source = "fallback"
+    warnings: list[str] = []
+    selected: dict[str, int] = {}
+
+    if online and discovery and token:
+        try:
+            available = fetch_gateway_context_windows(config, token)
+            required = configured_model_names(config)
+            selected = {name: available[name] for name in required if name in available}
+            missing = sorted(required - selected.keys())
+            candidates = [fallback_window] if missing else []
+            candidates.extend(selected.values())
+            if candidates:
+                provider_window = min(candidates)
+                source = "gateway" if not missing else "gateway+fallback"
+            if missing:
+                warnings.append("catalog missing configured models: " + ", ".join(missing))
+            elif not selected:
+                warnings.append("catalog contains no configured model context metadata")
+        except (OSError, ValueError, json.JSONDecodeError, RemoraError) as exc:
+            warnings.append(f"context discovery failed: {exc}")
+
+    auto_compact_window = explicit_window or provider_window
+    auto_compact_percent = explicit_percent or configured_compact_percent
+    effective_window = provider_window * effective_percent // 100
+    compact_trigger = auto_compact_window * auto_compact_percent // 100
+    if explicit_window is not None or explicit_percent is not None:
+        source += "+environment"
+    if auto_compact_window > provider_window:
+        warnings.append(
+            f"explicit {AUTO_COMPACT_ENV}={auto_compact_window} exceeds detected "
+            f"gateway ceiling {provider_window}"
+        )
+    if compact_trigger > effective_window:
+        warnings.append(
+            f"compact trigger {compact_trigger} exceeds effective context {effective_window}"
+        )
+    return {
+        "auto_compact_window": auto_compact_window,
+        "auto_compact_percent": auto_compact_percent,
+        "compact_trigger": compact_trigger,
+        "provider_window": provider_window,
+        "effective_window": effective_window,
+        "effective_window_percent": effective_percent,
+        "source": source,
+        "warning": "; ".join(warnings),
+        "model_windows": selected,
+    }
+
+
 def has_option(args: list[str], long_name: str, short_name: str | None = None) -> bool:
     for arg in args:
         if arg == long_name or arg.startswith(f"{long_name}="):
@@ -151,8 +315,9 @@ def build_launch(
     env = os.environ.copy()
     env["REMORA_ACTIVE"] = "1"
     env["ANTHROPIC_BASE_URL"] = str(proxy["base_url"]).rstrip("/")
+    token = resolve_auth_token(config) if require_token else ""
     if require_token:
-        env["ANTHROPIC_AUTH_TOKEN"] = resolve_auth_token(config)
+        env["ANTHROPIC_AUTH_TOKEN"] = token
     for key, env_name in MODEL_ENV.items():
         value = str(models.get(key, "")).strip()
         if value:
@@ -166,6 +331,10 @@ def build_launch(
     env["ENABLE_TOOL_SEARCH"] = "true" if runtime.get("enable_tool_search", False) else "false"
     if runtime.get("clear_subagent_model_override", True):
         env.pop("CLAUDE_CODE_SUBAGENT_MODEL", None)
+
+    context_policy = resolve_context_policy(config, token=token, online=require_token)
+    env[AUTO_COMPACT_ENV] = str(context_policy["auto_compact_window"])
+    env[AUTO_COMPACT_PERCENT_ENV] = str(context_policy["auto_compact_percent"])
 
     return [claude_bin, *prefix, *args], env
 
@@ -201,6 +370,22 @@ def doctor(config: dict[str, Any], online: bool) -> int:
     else:
         print("PASS global subagent override: absent")
 
+    context_policy = resolve_context_policy(config, token=token, online=online)
+    provider = context_policy["provider_window"]
+    print(
+        "PASS context policy: "
+        f"source={context_policy['source']} "
+        f"provider_window={provider} "
+        f"effective_window={context_policy['effective_window']} "
+        f"auto_compact_window={context_policy['auto_compact_window']} "
+        f"auto_compact_percent={context_policy['auto_compact_percent']} "
+        f"compact_trigger={context_policy['compact_trigger']}"
+    )
+    for name, window in sorted(context_policy["model_windows"].items()):
+        print(f"PASS model context: {name}={window}")
+    if context_policy["warning"]:
+        print(f"WARN context policy: {context_policy['warning']}")
+
     if online and token:
         url = f"{str(config['proxy']['base_url']).rstrip('/')}/v1/models"
         request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
@@ -232,6 +417,8 @@ def dry_run(config: dict[str, Any], args: list[str]) -> None:
             "ANTHROPIC_DEFAULT_SONNET_MODEL",
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
             "CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY",
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+            "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
             "ENABLE_TOOL_SEARCH",
         ]
         if key in env

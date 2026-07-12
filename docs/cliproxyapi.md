@@ -203,6 +203,29 @@ remora doctor --online
 remora dry-run
 ```
 
+## Context-window alignment
+
+Do not copy the public OpenAI API context number into CLIProxyAPI metadata. The public GPT-5.6 API documents 1.05M, while the Codex Plus, Pro, and Team OAuth catalogs currently report 372K. The latter is the operational ceiling for this route.
+
+Stock CLIProxyAPI exposes that value without any server modification:
+
+```bash
+curl -fsS \
+  -H "Authorization: Bearer $REMORA_AUTH_TOKEN" \
+  'http://127.0.0.1:8317/v1/models?client_version=remora' \
+  | jq '.models[] | select(.slug | startswith("gpt-5.6-")) | {slug, context_window}'
+```
+
+Remora performs the same lookup read-only at launch and mirrors Codex CLI's own ratios. With a 372K provider window, 95% effective context is 353.4K and the 90% compact trigger is 334.8K. Remora injects `CLAUDE_CODE_AUTO_COMPACT_WINDOW=372000` and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=90` only into its Claude Code child. CLIProxyAPI needs no configuration change, custom image, or restart.
+
+| Source | Meaning |
+|---|---|
+| Gateway `context_window` | Preferred operational ceiling |
+| `[context].fallback_window` | Conservative value used when catalog lookup is unavailable or incomplete |
+| `[context].effective_window_percent` | Diagnostic effective-input ratio; Codex defaults to 95% |
+| `[context].auto_compact_percent` | Child auto-compaction ratio; Codex defaults to 90% |
+| Existing Claude auto-compact environment variables | Explicit user overrides; take precedence |
+
 ## 429 diagnosis
 
 OpenAI documents an important Codex behavior: when a usage limit is reached during an active turn, Codex may continue that turn under fair-use limits and enforce the limit afterward. This is a turn-level product behavior, not a promise that every intermediary request will avoid HTTP 429. See [What happens if I reach a usage limit while Codex is working?](https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan#h_d4e7d9c216).

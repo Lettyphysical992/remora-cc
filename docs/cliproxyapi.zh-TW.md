@@ -208,6 +208,29 @@ remora doctor --online
 remora dry-run
 ```
 
+## Context window 對齊
+
+不要把 OpenAI 公開 API 的 context 數字直接覆寫進 CLIProxyAPI metadata。公開 GPT-5.6 API 標示 1.05M，但 Codex Plus、Pro、Team 的 OAuth catalog 目前回報 372K；後者才是這條 routing 的實際 ceiling。
+
+Stock CLIProxyAPI 不需修改即可唯讀取得該值：
+
+```bash
+curl -fsS \
+  -H "Authorization: Bearer $REMORA_AUTH_TOKEN" \
+  'http://127.0.0.1:8317/v1/models?client_version=remora' \
+  | jq '.models[] | select(.slug | startswith("gpt-5.6-")) | {slug, context_window}'
+```
+
+Remora 啟動時會做同一個唯讀查詢，並比照 Codex CLI 的比例。Provider window 為 372K 時，95% effective context 是 353.4K，90% compact trigger 是 334.8K。Remora 只在 Claude Code child 注入 `CLAUDE_CODE_AUTO_COMPACT_WINDOW=372000` 與 `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=90`。CLIProxyAPI 不需要改 config、換自訂 image 或重啟。
+
+| 來源 | 意義 |
+|---|---|
+| Gateway `context_window` | 優先採用的實際 ceiling |
+| `[context].fallback_window` | Catalog 查不到或不完整時的保守值 |
+| `[context].effective_window_percent` | 診斷用 effective-input 比例；Codex 預設 95% |
+| `[context].auto_compact_percent` | Child auto-compaction 比例；Codex 預設 90% |
+| 既有 Claude auto-compact 環境變數 | 使用者明確 override，優先級最高 |
+
 ## 429 與 cooldown
 
 OpenAI 官方說明了一個重要的 Codex 行為：若 active turn 執行途中達到 usage limit，Codex 可以在 fair-use 範圍內完成該 turn，之後才執行限制。這是產品層的 turn semantics，不代表中間每一個 HTTP request 都不會收到 429。參考 [What happens if I reach a usage limit while Codex is working?](https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan#h_d4e7d9c216)。

@@ -2,6 +2,12 @@
 
 All notable changes to Remora are documented here.
 
+## 0.1.2 — 2026-07-12
+
+Add gateway-aware context safety for long Claude Code sessions. Remora reads CLIProxyAPI's Codex-compatible model catalog and uses the smallest context window among every configured main and agent model. It mirrors Codex CLI 0.144.1's defaults: 95% is reported as effective context and auto-compaction starts at 90% of the raw provider window. For the current 372K GPT-5.6 catalog, that means 353.4K effective context and a 334.8K compact trigger.
+
+Discovery failures and incomplete catalogs fall back conservatively without blocking startup. Explicit user environment overrides still win. `doctor --online` now reports the detected per-model ceilings, effective context, and compact trigger, while `dry-run` exposes the token-free child settings.
+
 ## 0.1.1 — 2026-07-12
 
 Fix the offline bootstrap test on Linux runners by making the explicit checksum-only override take precedence when requested. Bootstrap remains attestation-first by default; only callers that set `REMORA_ALLOW_CHECKSUM_ONLY=1` opt into the documented trust downgrade. The bootstrap test now derives its artifact version from `VERSION` so future releases cannot silently test a stale package name.
