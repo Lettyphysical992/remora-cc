@@ -2,17 +2,100 @@
 
 > Remora does not install or manage CLIProxyAPI. This runbook documents the boundary between them and keeps OAuth enrollment as an explicit human step.
 
-## Deployment shape
+## Contents
 
-CLIProxyAPI's upstream Compose file publishes port `8317`, mounts a configuration, OAuth material, and logs, and runs the `eceasy/cli-proxy-api` image. A minimal deployment derived from that layout is:
+- [Quick Docker Compose deployment](#quick-docker-compose-deployment)
+- [Choose the host topology](#choose-the-host-topology)
+- [Start and inspect](#start-and-inspect)
+- [OAuth enrollment in the GUI](#oauth-enrollment-in-the-gui)
+- [Remora connection](#remora-connection)
+- [Model aliases](#model-aliases)
+- [429 diagnosis](#429-diagnosis)
+- [Data and backup policy](#data-and-backup-policy)
+
+[繁體中文](./cliproxyapi.zh-TW.md)
+
+## Quick Docker Compose deployment
+
+This example follows the upstream [Docker Compose guide](https://help.router-for.me/docker/docker-compose) and [configuration schema](https://github.com/router-for-me/CLIProxyAPI/blob/main/config.example.yaml). It exposes the proxy and management UI to the LAN while keeping the Codex OAuth callback on loopback for an SSH tunnel.
+
+| Requirement | Minimum |
+|---|---|
+| Host | The Remora computer itself, or a Linux server/NAS reachable from it |
+| Runtime | Docker Engine with the Compose plugin |
+| Network | Trusted LAN or VPN; use TLS when crossing an untrusted network |
+| Secrets | Separate random proxy API key and management key |
+
+Create a private deployment directory and generate two independent secrets:
+
+```bash
+mkdir -p ~/containers/cliproxyapi/{auths,logs}
+chmod 700 ~/containers/cliproxyapi ~/containers/cliproxyapi/auths
+cd ~/containers/cliproxyapi
+
+openssl rand -base64 32  # proxy API key: Remora uses this
+openssl rand -base64 32  # management key: browser GUI uses this
+```
+
+> ⚠️ **Keep the two values separate.** The proxy API key authorizes model requests. The management key can change configuration and OAuth credentials, so it is more privileged.
+
+## Choose the host topology
+
+CLIProxyAPI can run on the same computer as Remora or on another machine. Decide before creating the files because the published port, management policy, callback handling, and Remora URL differ.
+
+| Setting | Same computer | Separate host / home lab |
+|---|---|---|
+| Proxy port | Bind `8317` to loopback only | Publish `8317` to a trusted LAN/VPN |
+| Management API | `allow-remote: false` | Keep `allow-remote: false`; reach it through SSH |
+| Management URL | `http://127.0.0.1:8317/management.html` | `http://127.0.0.1:8318/management.html` through the tunnel |
+| OAuth callback | Browser reaches local `1455` directly | Keep server `1455` on loopback and use an SSH tunnel |
+| Remora `base_url` | `http://127.0.0.1:8317` | `http://SERVER_LAN_IP:8317` |
+| Network control | No LAN exposure | Firewall `8317` to the Remora client subnet/address |
+
+The examples below use the safer same-computer defaults. For a separate host, apply every change marked **separate host**.
+
+Create `config.yaml`, replacing both placeholder values:
+
+```yaml
+host: ""
+port: 8317
+
+remote-management:
+  allow-remote: false
+  secret-key: "REPLACE_WITH_MANAGEMENT_KEY"
+  disable-control-panel: false
+
+auth-dir: "/root/.cli-proxy-api"
+
+api-keys:
+  - "REPLACE_WITH_PROXY_API_KEY"
+
+debug: false
+logging-to-file: false
+usage-statistics-enabled: false
+request-retry: 3
+max-retry-interval: 30
+disable-cooling: false
+save-cooldown-status: false
+```
+
+Protect the configuration after saving it:
+
+```bash
+chmod 600 config.yaml
+```
+
+Create `compose.yaml`:
 
 ```yaml
 services:
   cli-proxy-api:
     image: eceasy/cli-proxy-api:latest
+    pull_policy: always
     container_name: cli-proxy-api
     ports:
-      - "8317:8317"
+      - "127.0.0.1:8317:8317"
+      - "127.0.0.1:1455:1455"
     volumes:
       - ./config.yaml:/CLIProxyAPI/config.yaml
       - ./auths:/root/.cli-proxy-api
@@ -20,20 +103,65 @@ services:
     restart: unless-stopped
 ```
 
-> ⚠️ **Pin a tested image tag for a shared deployment.** `latest` is convenient for first setup but can change gateway behavior without changing Remora.
+For a **separate host**, publish only the proxy port to the LAN; the configuration can keep `allow-remote: false`:
 
-Generate independent API and management secrets rather than reusing an account password:
-
-```bash
-openssl rand -base64 32
-openssl rand -base64 32
+```yaml
+# compose.yaml, under services.cli-proxy-api.ports
+ports:
+  - "8317:8317"
+  - "127.0.0.1:1455:1455"
 ```
 
-Follow the [CLIProxyAPI documentation](https://help.router-for.me/) for the current `config.yaml` schema. Keep the service behind a trusted LAN, VPN, or TLS reverse proxy; port `8317` accepts prompts, source code, and bearer credentials.
+Keep port `1455` on server loopback. Restrict `8317` with the host firewall to the Remora machine or trusted VPN subnet. Although the management page and model endpoint share this port, `allow-remote: false` rejects management requests that do not arrive from server localhost.
 
-## OAuth enrollment
+If a trusted LAN must access the management UI directly, `allow-remote: true` is an explicit alternative. It makes the management key the remaining protection for those routes; prefer the SSH method below.
 
-OAuth is intentionally a human handoff. Start the container, open its documented management UI or login flow, and connect the OpenAI/Codex account interactively. Do not automate browser login, copy refresh tokens into this repository, or commit the mounted `auths` directory.
+> ⚠️ **`latest` follows the upstream quick start but is not reproducible.** After validating a version, pin its immutable image digest for a shared or production-like deployment.
+
+Do not commit the deployment directory. If it sits inside another repository, add these entries to that repository's `.gitignore`:
+
+```gitignore
+config.yaml
+auths/
+logs/
+```
+
+## Start and inspect
+
+Start the service and confirm that it loaded one configuration without exposing either key:
+
+```bash
+docker compose pull
+docker compose up -d
+docker compose ps
+docker compose logs --tail 100 cli-proxy-api
+```
+
+The management panel is served by CLIProxyAPI itself. On a separate host, create the management and OAuth callback tunnels together:
+
+```bash
+ssh \
+  -L 8318:127.0.0.1:8317 \
+  -L 1455:127.0.0.1:1455 \
+  USER@SERVER_LAN_IP
+```
+
+Choose the management URL for the topology:
+
+```text
+Same computer: http://127.0.0.1:8317/management.html
+Separate host through SSH: http://127.0.0.1:8318/management.html
+```
+
+Enter the management key when prompted. If the browser is not on the same trusted network, use a VPN or TLS reverse proxy instead of exposing port `8317` directly to the internet.
+
+## OAuth enrollment in the GUI
+
+OAuth is intentionally a human handoff. Open the management panel, select the OAuth section, start a Codex login, and follow the displayed authorization flow. The official [Management Center](https://github.com/router-for-me/Cli-Proxy-API-Management-Center) supports Codex OAuth and callback submission.
+
+On the **same computer**, no tunnel is needed because the browser can reach the loopback callback directly. On a **separate Docker host**, keep the two-forward SSH session from the previous section open until the browser flow completes. If the panel asks for the final callback URL or authorization result, paste it into the panel rather than storing it in a shell script. Successful enrollment creates a Codex JSON credential under the mounted `auths/` directory.
+
+> ⚠️ **Never automate browser login or copy OAuth JSON into Remora.** The `auths/` directory contains refresh material and belongs only on the gateway host.
 
 The deployment is ready for Remora when the gateway returns a model catalog with the configured bearer token:
 
@@ -42,6 +170,8 @@ curl --fail --silent --show-error \
   -H "Authorization: Bearer ${REMORA_AUTH_TOKEN}" \
   http://127.0.0.1:8317/v1/models
 ```
+
+For a separate-host deployment, replace loopback with the gateway's LAN or VPN address. An HTTP `200` response and a non-empty `.data` model list confirm the proxy API key and OAuth credential are both usable.
 
 ## Remora connection
 
@@ -75,6 +205,18 @@ remora dry-run
 
 ## 429 diagnosis
 
+OpenAI documents an important Codex behavior: when a usage limit is reached during an active turn, Codex may continue that turn under fair-use limits and enforce the limit afterward. This is a turn-level product behavior, not a promise that every intermediary request will avoid HTTP 429. See [What happens if I reach a usage limit while Codex is working?](https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan#h_d4e7d9c216).
+
+CLIProxyAPI v7.2.67 operates at request and credential level. Its Codex executor recognizes `usage_limit_reached` and reset metadata, but the auth scheduler marks every resulting HTTP 429 as quota exhaustion and cools the credential/model unless cooling is disabled. A Claude Code turn can require multiple translated upstream requests, so a local cooldown can interrupt the remaining work even when native Codex would have been allowed to finish its active turn.
+
+| Layer | Observed responsibility |
+|---|---|
+| OpenAI Codex product | May grant active-turn continuation after a plan limit is crossed |
+| OpenAI upstream endpoint | Can still return `usage_limit_reached`, capacity, connection, or transient rate-limit errors |
+| CLIProxyAPI executor | Converts Codex limit signals and reset metadata into an HTTP 429 result |
+| CLIProxyAPI auth scheduler | Treats that 429 as quota and makes the credential/model locally unavailable |
+| Claude Code | Retries according to its own client policy, but cannot select a credential hidden by the gateway scheduler |
+
 Use latency and response body to separate upstream limiting from local gateway cooldown:
 
 | Observation | Interpretation |
@@ -101,6 +243,10 @@ The fragment above is illustrative: preserve every existing token and account fi
 | Prevents CLIProxyAPI from placing that credential/model into its local cooldown scheduler | Cannot suppress or bypass a 429 returned by OpenAI |
 | Allows the client retry policy to keep reaching the upstream provider | Cannot make an exhausted quota usable |
 | Avoids a memory-only `model_cooldown` blackout with a single credential | Does not provide failover; add another eligible credential for that |
+
+> **Current conclusion:** the evidence supports a gateway-induced second-stage block, not proactive blocking based on the usage percentage. CLIProxyAPI first observes an upstream failure, then its local scheduler prevents later requests. Credential-scoped `disable_cooling` removes that second-stage block, but it cannot guarantee native Codex active-turn continuation because Claude Code and Codex may divide a turn into different upstream request boundaries.
+
+To capture a future reproduction without exposing source or tokens, record the first failing response's timestamp, latency, HTTP status, `error.type`, `error.code`, reset fields, and whether the next response is an immediate `model_cooldown`. This distinguishes `usage_limit_reached` from transient 429 and provides enough evidence for an upstream CLIProxyAPI issue.
 
 > ⚠️ **A container restart is a recovery lever, not a root-cause fix.** It erases memory-only selector state and can send traffic straight back into a real upstream rate limit.
 

@@ -153,6 +153,8 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ## Configure
 
+Need a gateway first? Follow the [minimal CLIProxyAPI Docker Compose deployment](./docs/cliproxyapi.md#quick-docker-compose-deployment), complete Codex OAuth in its GUI, then return here with the proxy API key.
+
 Edit the generated configuration:
 
 ```bash
@@ -224,6 +226,7 @@ The strongest behavioral check is simply to run both commands. `remora agents` s
 | Models work but names differ | The gateway exposes aliases different from this example | Update `[models]` and `[agent_models]` |
 | Native Claude also uses the gateway | Gateway variables were exported globally in the shell | Remove global `ANTHROPIC_*` exports; let Remora set them for its child |
 | A role is missing | An explicit `--agents` flag replaced Remora's dynamic map | Remove that flag or merge the role into your supplied JSON |
+| `claude.ai connectors are disabled` warning | Claude Code detected Remora's child-only gateway auth instead of the native Claude login | Expected inside Remora; run plain `claude` when claude.ai connectors are required |
 
 > ⚠️ **Do not disable gateway cooldown globally as the first fix.** A real upstream rate limit can become a retry storm. The safer order is lower concurrency, bounded retry, multiple credentials, and correct classification of transient versus quota 429 responses.
 

@@ -52,7 +52,7 @@ flowchart LR
     G --> OAI[OpenAI / Codex OAuth]
 ```
 
-Remora 本身不是 proxy，也不保存 OAuth credential。你需要準備 Anthropic Messages-compatible gateway，例如 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)。完整原理在 [架構文件](./docs/architecture.md)，gateway 部署與連線注意事項在 [CLIProxyAPI runbook](./docs/cliproxyapi.md)。
+Remora 本身不是 proxy，也不保存 OAuth credential。你需要準備 Anthropic Messages-compatible gateway，例如 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)。完整原理在 [架構文件](./docs/architecture.md)，從零部署與 GUI OAuth 操作在 [CLIProxyAPI 繁中指引](./docs/cliproxyapi.zh-TW.md)。
 
 ## 模型分配
 
@@ -151,6 +151,8 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ## 設定
 
+還沒有 gateway 時，先依照 [CLIProxyAPI Docker Compose 快速部署](./docs/cliproxyapi.zh-TW.md#docker-compose-快速部署)完成服務與 Codex OAuth GUI 操作，再帶著 proxy API key 回到這裡。
+
 ```bash
 ${EDITOR:-vi} ~/.config/remora-cc/config.toml
 ```
@@ -213,6 +215,7 @@ claude --version
 | 原生 Claude 也走 gateway | 你在 shell 全域 export 了 `ANTHROPIC_*` | 移除全域 export，交給 Remora child 注入 |
 | 找不到某個角色 | 你另外傳了 `--agents`，取代 Remora map | 移除該參數，或自行合併 JSON |
 | TokenBar Overview 沒顯示 Luna | 低占比模型可能未出現在 tooltip | 到 `Claude → Models` 檢查；subagent 仍歸 `client=claude, provider=openai` |
+| 出現 `claude.ai connectors are disabled` | Claude Code 偵測到 Remora child-only gateway auth，而不是原生 Claude login | Remora session 內屬預期行為；需要 claude.ai connectors 時改跑原生 `claude` |
 
 > ⚠️ **不要第一時間全域關閉 gateway cooldown。** 真實上游限流可能變成 retry storm。較安全順序是降低 concurrency、使用 bounded retry、增加 credential，再修正 transient 429 與 quota 429 的分類。
 

@@ -27,7 +27,7 @@ Collect and report the following without changing anything:
 | GitHub CLI | `gh` exists and can verify attestations; otherwise explain the checksum-only downgrade |
 | Existing install | Inspect the three Remora paths above and classify each as create, upgrade, preserve, or conflict |
 | Native Claude boundary | Record a sorted path manifest of `~/.claude` for post-install comparison; do not read credential contents |
-| Gateway | Ask only whether an Anthropic Messages-compatible gateway exists and what base URL should be configured |
+| Gateway | Ask only whether an Anthropic Messages-compatible gateway exists and what base URL should be configured; if absent, point to `docs/cliproxyapi.md` and keep OAuth as a human handoff |
 | Secret source | Ask whether the user will use an environment variable or an OS credential command; never ask for the secret value |
 
 If the executable path already exists and is not a symlink owned by Remora, treat it as a conflict and stop. If a configuration exists, preserve it and report that installation will not edit it.

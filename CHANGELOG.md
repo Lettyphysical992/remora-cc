@@ -7,3 +7,5 @@ All notable changes to Remora are documented here.
 Initial release. It includes the isolated launcher, a six-role GPT-5.6 Sol/Luna map with Terra as the default Sonnet alias, TOML configuration, environment or credential-command authentication, offline/online doctor checks, and isolation-focused tests.
 
 The public installation path is approval-gated and release-pinned. Release archives carry SHA-256 checksums and GitHub build-provenance attestations; the bootstrap requires both unless the user explicitly accepts checksum-only verification. The installer performs collision checks, preserves existing configuration, updates the payload atomically, and never writes native Claude state.
+
+The gateway documentation now includes a minimal Docker Compose deployment, independent OpenSSL-generated keys, separate same-computer and home-lab paths, LAN management hardening, SSH-tunneled Codex OAuth callback, GUI enrollment handoff, Remora connectivity checks, and a Traditional Chinese quick-start. Its 429 analysis distinguishes OpenAI's active-turn continuation from CLIProxyAPI's request-level credential cooldown.
