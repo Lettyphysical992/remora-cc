@@ -23,7 +23,7 @@ flowchart TD
 | Integration marker | Sets `REMORA_ACTIVE=1` in the copied environment | Status lines and hooks can identify remora without inspecting credentials or gateway URLs |
 | Settings | Writes no Claude settings; passes configured model ids through child-only `--settings` | Native configuration remains authoritative outside remora while subagent validation can see gateway ids |
 | Agents | Sends one JSON object through `--agents` | Claude Code scopes it to the current session |
-| Orchestration | Appends a dependency-based scheduling policy | Independent work runs in background; only immediate dependencies block in foreground |
+| Orchestration | Appends a dispatch brake plus dependency-based scheduling policy | Coupled investigation stays in the main session; eligible independent work runs in background |
 | Authentication | Resolves a remora-specific token, then sets `ANTHROPIC_AUTH_TOKEN` only in the child | The user's Anthropic login is neither read nor replaced on disk |
 | Model defaults | Sets the three documented `ANTHROPIC_DEFAULT_*_MODEL` variables in the child | Internal Claude tiers resolve to gateway model names |
 | Routing allowlist | Adds every configured gateway id to the session's `availableModels` | Claude does not silently inherit the main model for an excluded subagent id |
@@ -55,11 +55,17 @@ sequenceDiagram
 
 ## Role policy
 
-The split follows capability and token volume rather than file ownership. Read-only fan-out and fully specified mechanical work go to Luna. Work requiring design judgment, independent verification, or security reasoning goes to Sol. Subagents are leaf workers and are denied recursive delegation, preventing an unbounded agent tree.
+The split follows capability and token volume rather than file ownership. Substantial read-only fan-out and fully specified mechanical work go to Luna when their net benefit exceeds startup and synthesis cost. Small bounded repository scans stay with the main session. Work requiring design judgment, independent verification, or security reasoning goes to Sol. Subagents are leaf workers and are denied recursive delegation, preventing an unbounded agent tree.
 
 For every existing named role, its `--agents` definition is the sole model source. The orchestrator omits the Agent tool's invocation-level `model` field because Claude Code gives that field higher precedence than the role definition. An explicit invocation model is reserved for a truly ad-hoc agent with no named definition.
 
 Foreground versus background is a parent-orchestrator decision, so it cannot be enforced inside a leaf agent prompt. remora therefore appends a child-session-only policy: independent work and parallel fan-out use `run_in_background: true`; foreground execution is reserved for a result required by the main session's very next action when no other useful work can proceed. Explicit user `--append-system-prompt` or `--append-system-prompt-file` arguments replace this default for that session.
+
+Scheduling begins only after a dispatch brake. Unstable success conditions, dependence on evolving main-session evidence, overlapping writes, and missing closure ownership are hard blockers. Everything else is a net-benefit decision across model cost, scarce context, elapsed time, isolation, and independent verification versus reconstruction, coordination, and synthesis. A slight direct-work speed advantage is therefore not a veto when a bounded Luna worker materially saves Sol usage.
+
+A role match remains an eligibility hint, not a command to spawn. Root-cause discovery, trace-driven debugging, and state-propagation work stay in the main session while diagnosis and implementation depend on the same evidence; a single unknown bug must not become a sequential scout-to-executor pipeline. Read-only repository fan-out is opt-in and requires substantial per-surface work, overlapable latency, or intentionally independent perspectives. Separate directories and roughly a dozen short files are not enough. Executors receive work only after the root cause, scope, ownership, and done criteria are stable enough for a one-shot brief; stable multi-file repetition remains a positive path to `mech-executor`.
+
+The policy change is backed by a public, reproducible [dispatch-brake experiment](https://github.com/Nanako0129/pilotfish/tree/main/benchmarks/dispatch-brake) containing negative and positive-control fixtures, neutral task prompts, every observed policy iteration, normalized Agent traces, exact Agent tool inputs, raw-stream hashes, model usage, timing, reported cost fields, test outcomes, interpretation limits, and bilingual reports.
 
 | Decision | Chosen behavior | Rejected behavior |
 |---|---|---|

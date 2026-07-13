@@ -2,6 +2,18 @@
 
 All notable changes to remora are documented here.
 
+## 0.1.8 — 2026-07-13
+
+Add a [Baton](https://github.com/cablate/baton)-style dispatch brake before role routing. Unstable outcomes, dependence on evolving main-session evidence, overlapping writes, and missing closure ownership are hard blockers. All other eligible work is chosen by net benefit across model cost, scarce context, elapsed time, isolation, and verification rather than requiring delegation to win every axis. Direct execution being slightly faster is not a veto when a bounded Luna worker materially saves Sol usage.
+
+Single unknown bugs now keep root-cause discovery, trace-driven debugging, the first minimal fix, and live verification in one main-session reasoning chain instead of becoming a sequential scout-to-executor pipeline. Read-only repository fan-out is opt-in: small bounded scans stay inline, while substantial independent scans, overlapable external latency, or deliberately independent perspectives can still fan out. Stable multi-file repetition retains an explicit path to `mech-executor`.
+
+The change was tested against a disposable state-clone fixture modeled after a real status-line investigation. The v0.1.6 baseline used a foreground scout, foreground executor, and background verifier, completing in 322.90 seconds with a $1.316911 client-reported cost field. The balanced single-bug guard kept diagnosis and implementation inline, retained a fresh verifier, completed in 200.86 seconds, and reported $0.817504: 37.79% less wall time and 37.92% less reported cost in this single-run workload. Correctness remained 2/2 tests passing.
+
+The complete bilingual experiment is public in pilotfish, including the negative and positive-control fixtures, neutral prompts, rejected policy iterations, exact Agent tool inputs, normalized traces, model usage, raw-stream hashes, commands, limitations, and machine-readable results. The positive control confirms that the brake does not disable delegation: a 12-file stable mechanical edit still routed to the cheaper worker, reducing the client-reported cost field by 36.01% while taking 7.92% more wall time in one run. Regression tests lock both the negative boundary and positive delegation paths without changing remora's model routing, session isolation, or native-Claude guarantees.
+
+One compatibility limit is disclosed rather than hidden: when GPT-5.6 Sol auto-loaded the separately installed [baton-dispatch v0.1.1](https://github.com/cablate/baton) skill, its later two-surface routing guidance still caused the small read-only remora control to fan out. An attempted precedence sentence did not fix the interaction and was removed. v0.1.8 does not claim to override every user-installed orchestration skill.
+
 ## 0.1.7 — 2026-07-13
 
 Harden Calico context handling against Codex runtime-catalog hot updates. CLIProxyAPI and the bundled Codex catalog can temporarily retain an older 372K value after the ChatGPT-authenticated runtime catalog changes GPT-5.6 Sol, Terra, and Luna to 272K. remora now keeps the gateway value as a diagnostic ceiling, reads a fresh local Codex `models_cache.json` as the runtime ceiling, and maps the smaller per-model value into Calico. Missing, stale, or incomplete Codex metadata falls back safely to 272K, while a later fresh 372K runtime catalog automatically restores 372K instead of being permanently pinned.

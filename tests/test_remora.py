@@ -61,6 +61,8 @@ class RemoraTests(unittest.TestCase):
         self.assertIn("Use foreground execution only", policy)
         self.assertIn("omit the `model` argument entirely", policy)
         self.assertIn("only for a truly ad-hoc agent", policy)
+        self.assertIn("apply a dispatch brake", policy)
+        self.assertIn("net benefit remains positive", policy)
         self.assertEqual(env["ANTHROPIC_AUTH_TOKEN"], "test-secret")
         self.assertNotIn("CLAUDE_CODE_AUTO_COMPACT_WINDOW", env)
         self.assertNotIn("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", env)
@@ -75,6 +77,32 @@ class RemoraTests(unittest.TestCase):
         self.assertIn("existing named role", policy)
         self.assertIn("invocation-level model overrides the role definition", policy)
         self.assertIn("ad-hoc agent that has no named role definition", policy)
+
+    def test_policy_keeps_tightly_coupled_exploration_in_main_session(self) -> None:
+        policy = remora.load_orchestration_policy()
+        self.assertIn("worker would repeatedly depend", policy)
+        self.assertIn("main session's evolving evidence", policy)
+        self.assertIn("root-cause discovery", policy)
+        self.assertIn("trace-driven debugging", policy)
+        self.assertIn("tightly coupled state propagation", policy)
+        self.assertIn("single unknown bug", policy)
+        self.assertIn("sequential `scout` → `executor` pipeline", policy)
+        self.assertIn("does not own or block the main diagnosis", policy)
+        self.assertIn("asking the worker to rediscover the investigation", policy)
+        self.assertIn("eligible rather than mandatory", policy)
+
+    def test_policy_preserves_positive_delegation_paths(self) -> None:
+        policy = remora.load_orchestration_policy()
+        self.assertIn("choose by net benefit", policy)
+        self.assertIn("lower model cost or quota use", policy)
+        self.assertIn("preserving scarce main-session context", policy)
+        self.assertIn("direct execution being slightly faster is not a veto", policy)
+        self.assertIn("Read-only repository fan-out is opt-in", policy)
+        self.assertIn("substantial independent scan", policy)
+        self.assertIn("external or tool latency can overlap", policy)
+        self.assertIn("Separate directories are not evidence", policy)
+        self.assertIn("roughly a dozen short files", policy)
+        self.assertIn("stable multi-file repetition", policy)
 
     @mock.patch.dict(os.environ, {"REMORA_AUTH_TOKEN": "test-secret"}, clear=False)
     def test_explicit_claude_flags_win(self) -> None:

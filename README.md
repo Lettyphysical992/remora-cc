@@ -26,7 +26,7 @@
 
 ## What it changes
 
-remora launches a child `claude` process with a session-only `--agents` JSON document, a session-only orchestration addendum, and a child-only gateway environment. Claude Code officially documents `--agents` as a current-session source that outranks project and user agent files without persisting them. The addendum schedules independent work in the background and reserves foreground agents for immediate blocking dependencies.
+remora launches a child `claude` process with a session-only `--agents` JSON document, a session-only orchestration addendum, and a child-only gateway environment. Claude Code officially documents `--agents` as a current-session source that outranks project and user agent files without persisting them. The addendum first applies a dispatch brake: unstable contracts, overlapping ownership, and tightly coupled investigation stay in the main session. Eligible work is then chosen by net benefit, so a bounded Luna worker may still be worthwhile when it saves scarce Sol usage even if direct execution is slightly faster. Small repository scans remain inline by default; stable multi-file repetition, genuinely large independent scans, and fresh verification retain explicit delegation paths.
 
 | Surface | Native `claude` | `remora` session |
 |---|---|---|
@@ -154,7 +154,7 @@ Give Claude Code this prompt. The immutable tag is intentional:
 
 ```text
 Read and follow this installation runbook:
-https://raw.githubusercontent.com/Nanako0129/remora-cc/v0.1.7/install/AGENT-INSTALL.md
+https://raw.githubusercontent.com/Nanako0129/remora-cc/v0.1.8/install/AGENT-INSTALL.md
 
 Perform only the read-only preflight first. Show every proposed filesystem
 change, trust boundary, download source, and verification step. Do not write
@@ -166,7 +166,7 @@ The runbook will not ask for a bearer token or OAuth file. It stops at an approv
 ### Manual source install
 
 ```bash
-git clone --branch v0.1.7 --depth 1 https://github.com/Nanako0129/remora-cc.git
+git clone --branch v0.1.8 --depth 1 https://github.com/Nanako0129/remora-cc.git
 cd remora-cc
 ./install.sh
 ```
@@ -263,6 +263,7 @@ The strongest behavioral check is simply to run both commands. `remora agents` s
 | How do I keep native Claude updates separate from remora's Calico binary? | Install the patched binary under a separate name such as `~/.local/bin/calico-claude`, set `[runtime].claude_binary` to that absolute path, and leave `~/.local/bin/claude` under the official updater. |
 | Does active-turn v1 guarantee unlimited work after quota exhaustion? | No. It preserves the observable native Codex turn contract, but OpenAI still controls fair-use and may terminate a recognized turn. v1 advertises readiness only for one local Codex credential with cooling disabled. |
 | Will `/resume` adopt a newly edited model map? | Not always. Claude can restore the session-scoped agent definitions recorded in the old transcript. Start a new remora session or hand off into one after changing routing. |
+| Does remora override a separately installed delegation skill? | Not reliably. A generic skill is injected later in the conversation and can supply conflicting routing guidance. The public v0.1.8 experiment observed [baton-dispatch](https://github.com/cablate/baton) causing GPT-5.6 Sol to fan out a small scan despite remora's size gate. Keep one orchestration authority active, or give the skill a project-local compatibility rule; remora does not silently disable user skills. |
 | Can a remora session use claude.ai remote control or connectors? | Gateway mode does not retain the native claude.ai authenticated transport, so those features may be unavailable. Run plain `claude` when they are required. |
 
 ## Operational notes
