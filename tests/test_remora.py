@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -196,6 +197,134 @@ class RemoraTests(unittest.TestCase):
         _, env = remora.build_launch(self.config, [])
         self.assertEqual(env["REMORA_ACTIVE"], "1")
         self.assertNotIn("REMORA_ACTIVE", os.environ)
+
+    def test_child_isolates_coralline_stores_per_gateway(self) -> None:
+        # coralline's 5h/7d segments read a cross-session high-water store, and its
+        # burn segment appends a 5h sample log; both are fed by Anthropic responses.
+        # A remora child talks to a GPT gateway on a different account, so it must
+        # not share (and poison) the host's native stores. The child env points
+        # coralline at a per-gateway subdir in remora-owned XDG state, overriding
+        # any inherited host value without writing into ~/.claude.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state_home = root / "state"
+            native = root / ".claude"
+            host_7d = str(native / "coralline" / "limit-7d.tsv")
+            host_burn = str(native / "coralline" / "burn-5h.tsv")
+            host_config = str(native / "coralline.conf")
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "HOME": str(root),
+                    "XDG_STATE_HOME": str(state_home),
+                    "CORALLINE_CONFIG": host_config,
+                    "CORALLINE_RL7D_FILE": host_7d,
+                    "CORALLINE_BURN_FILE": host_burn,
+                },
+                clear=False,
+            ):
+                _, env = remora.build_launch(self.config, [], require_token=False)
+            store_dir = Path(env["CORALLINE_RL5H_FILE"]).parent
+            # a per-gateway subdir under remora-owned state, prefixed by the host
+            self.assertEqual(
+                store_dir.parent,
+                state_home / "remora-cc" / "coralline" / "gateways",
+            )
+            self.assertTrue(store_dir.name.startswith("127-0-0-1-8317-"))
+            # all three stores redirected into that same dir
+            self.assertEqual(Path(env["CORALLINE_RL5H_FILE"]).name, "limit-5h")
+            self.assertEqual(Path(env["CORALLINE_RL7D_FILE"]).parent, store_dir)
+            self.assertEqual(Path(env["CORALLINE_BURN_FILE"]).parent, store_dir)
+            self.assertEqual(Path(env["CORALLINE_BURN_FILE"]).name, "burn-5h.tsv")
+            # the generated config wrapper also lives in the scoped directory
+            wrapper = Path(env["CORALLINE_CONFIG"])
+            self.assertEqual(wrapper.parent, store_dir)
+            self.assertTrue(wrapper.name.startswith("config-"))
+            # inherited host paths and config are overridden, not preserved
+            self.assertNotEqual(env["CORALLINE_RL7D_FILE"], host_7d)
+            self.assertNotEqual(env["CORALLINE_BURN_FILE"], host_burn)
+            self.assertNotEqual(env["CORALLINE_CONFIG"], host_config)
+            self.assertNotIn(native, wrapper.parents)
+
+    def test_coralline_wrapper_reapplies_scoped_paths_after_user_config(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "user config" / "coralline.conf"
+            source.parent.mkdir()
+            source.write_text(
+                "\n".join(
+                    [
+                        "VL_LIMIT_SYNC=1",
+                        'CONFIG_SIBLING="${CORALLINE_CONFIG%/*}/theme.conf"',
+                        'VL_CONF_SIBLING="${VL_CONF%/*}/theme.conf"',
+                        "RL5H_FILE=/host/custom-5h",
+                        "RL7D_FILE=/host/custom-7d",
+                        "BURN_FILE=/host/custom-burn",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            scoped = root / "gateway"
+            env = {
+                "CORALLINE_CONFIG": str(scoped / "config.conf"),
+                "CORALLINE_RL5H_FILE": str(scoped / "limit-5h"),
+                "CORALLINE_RL7D_FILE": str(scoped / "limit-7d"),
+                "CORALLINE_BURN_FILE": str(scoped / "burn-5h.tsv"),
+            }
+            remora.prepare_coralline_config(env, str(source))
+            output = subprocess.check_output(
+                [
+                    "bash",
+                    "-c",
+                    '. "$1"; printf "%s\\n" "$VL_LIMIT_SYNC" "$CORALLINE_CONFIG" '
+                    '"$VL_CONF" "$CONFIG_SIBLING" "$VL_CONF_SIBLING" '
+                    '"$RL5H_FILE" "$RL7D_FILE" "$BURN_FILE"',
+                    "remora-test",
+                    env["CORALLINE_CONFIG"],
+                ],
+                text=True,
+            ).splitlines()
+            self.assertEqual(
+                output,
+                [
+                    "1",
+                    str(source),
+                    str(source),
+                    str(source.parent / "theme.conf"),
+                    str(source.parent / "theme.conf"),
+                    env["CORALLINE_RL5H_FILE"],
+                    env["CORALLINE_RL7D_FILE"],
+                    env["CORALLINE_BURN_FILE"],
+                ],
+            )
+            self.assertEqual(
+                Path(env["CORALLINE_CONFIG"]).stat().st_mode & 0o777,
+                0o600,
+            )
+
+    def test_path_routed_gateways_get_distinct_coralline_stores(self) -> None:
+        # Two gateways behind the same reverse-proxy host must not collapse into
+        # one store, or the cross-account poisoning this change prevents returns.
+        team_a = remora.coralline_store_dir("https://gw.example.com/team-a")
+        team_b = remora.coralline_store_dir("https://gw.example.com/team-b")
+        self.assertNotEqual(team_a, team_b)
+        self.assertTrue(team_a.name.startswith("gw-example-com-"))
+        self.assertTrue(team_b.name.startswith("gw-example-com-"))
+        # scheme also participates in the key
+        self.assertNotEqual(
+            remora.coralline_store_dir("http://gw.example.com/team-a"), team_a
+        )
+
+    def test_long_gateway_host_keeps_store_component_within_filesystem_limit(self) -> None:
+        host = ".".join(["a" * 63, "b" * 63, "c" * 63, "d" * 61])
+        team_a = remora.coralline_store_dir(f"https://{host}/team-a")
+        team_b = remora.coralline_store_dir(f"https://{host}/team-b")
+        self.assertLessEqual(
+            len(team_a.name.encode("utf-8")),
+            remora.CORALLINE_GATEWAY_PREFIX_MAX + 11,
+        )
+        self.assertNotEqual(team_a, team_b)
 
     def test_token_command_is_executed_without_a_shell(self) -> None:
         config = json.loads(json.dumps(self.config))
